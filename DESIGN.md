@@ -65,15 +65,13 @@ Verified at source level before scoping (`/usr/lib/node_modules/openclaw/dist/pl
 
 ## Phase plan
 
-### Phase 0 — scaffold (current)
-
-Ship a single stubbed `langgraph_dispatch` tool. Goal is to validate plugin loading end-to-end:
+### Phase 0 — scaffold (complete)
 
 - [x] Package scaffolded via `openclaw plugins init`
 - [x] Plugin id renamed to `openclaw-langgraph-bridge`
 - [x] `langgraph_dispatch` tool present with stub `execute` returning synthetic IDs
-- [ ] Local install → gateway reload → agent sees the tool → tool call succeeds end-to-end
-- [ ] Smoke test from a real Slack thread
+
+The loading-path smoke from the original Phase-0 plan was skipped because Phase 1 lands the real dispatch in the same iteration.
 
 ### Phase 1 — real dispatch
 
