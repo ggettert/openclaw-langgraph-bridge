@@ -86,13 +86,30 @@ Wire `langgraph_dispatch` to actual `managedFlows` + LangGraph HTTP:
 
 ### Phase 2 — webhook + classification
 
-- [ ] `registerPluginHttpRoute` at `/plugins/openclaw-langgraph-bridge/events`
-- [ ] Auth: shared secret via `Authorization: Bearer <callbackToken>`
-- [ ] Validation: schema check, seq dedup, flow lookup
-- [ ] Classify kind: `status`/`milestone`/`decision`/`terminal`/`hitl` → corresponding flow + queue action
-- [ ] Status events get `contextKey` for queue dedup
-- [ ] Decision/milestone/terminal/hitl pair with `requestHeartbeat`
-- [ ] End-to-end smoke: dispatch run that emits one of each event type; verify agent only wakes on the non-status ones
+- [x] Switched entry to `definePluginEntry` so we can register both the tool and the HTTP route from one `register(api)`
+- [x] `api.registerHttpRoute({path: "/plugins/openclaw-langgraph-bridge/events", auth: "plugin", handler})`
+- [x] Auth: shared secret via `Authorization: Bearer <callbackToken>`; refuses when token unset (no open ingress)
+- [x] Validation: 64 KB body limit, JSON parse, schema check (`kind` in allowlist, non-empty `flow_id`), flow lookup via `managedFlows.bindSession().get(flowId)`
+- [x] Classifier (`src/event-classifier.ts`) — pure function, 12 unit tests covering all five kinds
+- [x] Status events use `contextKey: "langgraph:<flow_id>:status"` for queue dedup; decision/milestone/terminal/hitl pass `null` contextKey
+- [x] Decision/milestone/terminal/hitl pair with `requestHeartbeat({source: "hook", intent: "event", reason, sessionKey, coalesceMs: 500})`
+- [x] Tool dispatch now sets the LangGraph run `webhook` field to `callbackPublicBaseUrl + WEBHOOK_PATH` when configured
+- [x] `seq` dedup: not implemented yet (still relying on LangGraph's at-least-once delivery contract). Phase 4.
+- [ ] **In-gateway smoke**: install on gateway with `callbackToken` + `callbackPublicBaseUrl` set, POST loopback events via curl, verify the flow updates + system event is enqueued + heartbeat fires only for non-status kinds
+
+**Trade-off taken at Phase 2:** the upstream `openclaw plugins build / validate` CLI is hardcoded for `defineToolPlugin` entries; switching to `definePluginEntry` to gain HTTP-route registration means we now hand-maintain `openclaw.plugin.json`. Not a blocker; gateway loads fine via `openclaw.extensions` in `package.json`.
+
+**Architecture pivot during Phase 2 (2026-06-15):** Discovered that LangGraph's `webhook` field is *terminal-only* (single fire on run completion). Per-step events (node started, errored, interrupted) only come through the SSE stream at `GET /threads/{tid}/runs/{rid}/stream?stream_mode=events`. Decision: keep the `/events` HTTP route (it still serves LangGraph's terminal callback + an escape hatch for workflow-author POSTs), AND add an SSE subscriber that opens a streaming connection per dispatched run and translates LangGraph native events into our Mode B kinds. Subscriber lives in `src/event-subscriber.ts`; mapping heuristics:
+- `error` event → `terminal` (failed)
+- `interrupt` event → `hitl`
+- `on_chain_start` on a sub-node → `milestone`
+- `on_chain_start` on the root graph → skipped (internal noise)
+- `on_chain_end` on a sub-node → `status`
+- `on_chain_end` on the root graph → `terminal` (success)
+- `on_tool_*` → `status` (deep noise)
+- everything else (model start/end, etc.) → skipped
+
+Workflow authors don't have to do anything; the plugin scrapes LangGraph's native event stream and handles the routing.
 
 ### Phase 3 — read tool + HITL hook
 
