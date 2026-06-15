@@ -127,7 +127,8 @@ describe("processEvent — hitl", () => {
       waitJson: Record<string, unknown>;
     };
     expect(setWaitingArgs.flowId).toBe("f1");
-    expect(setWaitingArgs.expectedRevision).toBe(7);
+    // Revision is re-read from flows.get() (mocked to 1), not the hint.
+    expect(setWaitingArgs.expectedRevision).toBe(1);
     expect(setWaitingArgs.waitJson).toMatchObject({
       kind: "langgraph_interrupt",
       interrupt_id: "i-99",
@@ -161,7 +162,8 @@ describe("processEvent — terminal", () => {
       stateJson: Record<string, unknown>;
     };
     expect(finishArgs.flowId).toBe("f1");
-    expect(finishArgs.expectedRevision).toBe(3);
+    // Revision is re-read from flows.get() (mocked to 1), not the hint.
+    expect(finishArgs.expectedRevision).toBe(1);
     expect(finishArgs.stateJson).toMatchObject({
       terminal_title: "ok",
       terminal_summary: "deploy succeeded",

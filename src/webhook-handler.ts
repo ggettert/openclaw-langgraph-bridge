@@ -98,13 +98,29 @@ export type IncomingEventBody = {
 export function processEvent(params: {
   body: IncomingEventBody;
   sessionKey: string;
-  flowRevision: number;
+  /**
+   * Optional starting revision hint. When provided, we still re-read the
+   * flow's current revision before issuing a mutation so we never lose
+   * a setWaiting/finish call to a revision_conflict. Phase 2 v3 (SSE)
+   * passes the initial revision captured at createManaged, but mutations
+   * land long after resume() has bumped revision; ignoring the hint and
+   * re-reading is the safe path.
+   */
+  flowRevision?: number;
   deps: WebhookHandlerDeps;
 }): { status: "ok"; action: string } {
-  const { body, sessionKey, flowRevision, deps } = params;
+  const { body, sessionKey, deps } = params;
   const kind = body.kind as LanggraphEventKind;
 
   const flows = deps.runtime.tasks.managedFlows.bindSession({ sessionKey });
+
+  // Always re-read the current revision before issuing a mutation that
+  // takes expectedRevision. The flow likely moved through createManaged
+  // -> resume(running) -> ... by the time we get here.
+  const currentFlow = flows.get(body.flow_id) as
+    | { revision?: number }
+    | undefined;
+  const flowRevision = Number(currentFlow?.revision ?? params.flowRevision ?? 0);
   const classification = classifyEvent({ kind });
   const title = body.title ?? `langgraph:${kind}`;
   const summary = (body.summary ?? "").slice(0, 280);
