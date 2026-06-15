@@ -104,6 +104,56 @@ describe("classifyStreamFrame — updates", () => {
     expect(body.title).toBe("node:coder");
   });
 
+  it("updates with node='__interrupt__' is classified as hitl (regression: 2026-06-15)", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "updates",
+          data: {
+            __interrupt__: [
+              { id: "int-1", value: { prompt: "approve merge?" } },
+            ],
+          },
+        },
+        "flow-1",
+        9,
+      ),
+    );
+    expect(body.kind).toBe("hitl");
+    expect(body.interrupt_id).toBe("int-1");
+    expect(body.summary).toBe("approve merge?");
+  });
+
+  it("__interrupt__ with plain-string value falls back to that string as prompt", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "updates",
+          data: { __interrupt__: [{ id: "int-2", value: "yes/no?" }] },
+        },
+        "flow-1",
+        10,
+      ),
+    );
+    expect(body.kind).toBe("hitl");
+    expect(body.summary).toBe("yes/no?");
+  });
+
+  it("__interrupt__ missing id synthesizes a seq-based one", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "updates",
+          data: { __interrupt__: [{ value: { prompt: "x" } }] },
+        },
+        "flow-1",
+        11,
+      ),
+    );
+    expect(body.kind).toBe("hitl");
+    expect(body.interrupt_id).toBe("seq-11");
+  });
+
   it("empty updates payload is skipped", () => {
     const r = classifyStreamFrame(
       { event: "updates", data: {} },

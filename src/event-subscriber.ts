@@ -115,6 +115,33 @@ export function classifyStreamFrame(
     // emit several, but Phase 2 emits one summary event.
     const node = nodeNames[0]!;
     const delta = (payload as Record<string, unknown>)[node];
+
+    // Special case: LangGraph signals a HITL interrupt by emitting an
+    // updates frame with the synthetic node name "__interrupt__". The
+    // delta is typically an array of Interrupt objects: [{value, id, ...}].
+    // Map this to Mode B hitl so the flow goes to waiting state and the
+    // agent is woken to ask the human.
+    if (node === "__interrupt__") {
+      const interrupts = Array.isArray(delta) ? delta : [delta];
+      const first = (interrupts[0] ?? {}) as Record<string, unknown>;
+      const prompt = summarizeInterruptPrompt(first);
+      return {
+        kind: "emit",
+        body: {
+          kind: "hitl",
+          flow_id: flowId,
+          seq,
+          title: "interrupt",
+          summary: prompt,
+          data: { interrupts },
+          interrupt_id:
+            (first.id as string | undefined) ??
+            (first.interrupt_id as string | undefined) ??
+            `seq-${seq}`,
+        },
+      };
+    }
+
     return {
       kind: "emit",
       body: {
@@ -179,6 +206,25 @@ const VALID_KINDS = new Set<string>([
 
 function isValidKind(s: string): s is LanggraphEventKind {
   return VALID_KINDS.has(s);
+}
+
+/**
+ * Best-effort human prompt extraction from a LangGraph Interrupt object.
+ * The `value` field is whatever the workflow passed to `interrupt(...)`
+ * — commonly a dict like {"prompt": "..."} or a plain string.
+ */
+function summarizeInterruptPrompt(interrupt: Record<string, unknown>): string {
+  const value = interrupt.value;
+  if (typeof value === "string") return value.slice(0, 280);
+  if (value && typeof value === "object") {
+    const v = value as Record<string, unknown>;
+    const prompt =
+      (v.prompt as string | undefined) ??
+      (v.message as string | undefined) ??
+      (v.question as string | undefined);
+    if (prompt) return prompt.slice(0, 280);
+  }
+  return summarizeForHumans(value);
 }
 
 function summarizeForHumans(data: unknown): string {
