@@ -1,0 +1,34 @@
+{
+  "id": "openclaw-langgraph-bridge",
+  "name": "openclaw-langgraph-bridge",
+  "description": "Bridges an OpenClaw agent acting as orchestrator with one or more LangGraph workflows.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "langgraphBaseUrl": {
+        "type": "string",
+        "description": "Base URL of the LangGraph server. Will be used by Phase 1 dispatch when wired."
+      },
+      "callbackToken": {
+        "type": "string",
+        "description": "Shared secret the LangGraph workflow includes on inbound webhook POSTs. Required when the webhook handler is wired in Phase 2."
+      },
+      "allowedWorkflows": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Allowlist of workflow ids the agent may dispatch. Empty/unset disables the allowlist."
+      }
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "langgraph_dispatch"
+    ]
+  }
+}
