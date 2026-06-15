@@ -156,11 +156,16 @@ export function classifyStreamFrame(
   }
 
   // Custom frame: the workflow author wrote via get_stream_writer().
-  // If the data carries a recognizable `kind`, pass it through as Mode
-  // B. Otherwise treat as status.
+  // Three recognized shapes (in priority order):
+  //   1. Explicit Mode B: {kind: "status|milestone|decision|terminal|hitl",
+  //      title?, summary?, interrupt_id?} — pass through.
+  //   2. Native fleet vocabulary: {phase: "<name>", event: "started|finished|failed", ...}
+  //      — translate to Mode B using event-name heuristic.
+  //   3. Other custom payload — degrade to status.
   if (frame.event === "custom") {
     const data = frame.data as Record<string, unknown> | undefined;
     if (data && typeof data === "object") {
+      // Shape 1: explicit Mode B
       const authorKind = data.kind as string | undefined;
       if (authorKind && isValidKind(authorKind)) {
         return {
@@ -176,7 +181,25 @@ export function classifyStreamFrame(
           },
         };
       }
+
+      // Shape 2: native fleet vocabulary {phase, event, ...}
+      const phase = data.phase as string | undefined;
+      const fleetEvent = data.event as string | undefined;
+      if (phase && fleetEvent) {
+        const translated = translateFleetVocabulary(phase, fleetEvent, data);
+        return {
+          kind: "emit",
+          body: {
+            ...translated,
+            flow_id: flowId,
+            seq,
+            data,
+          },
+        };
+      }
     }
+
+    // Shape 3: unknown custom payload
     return {
       kind: "emit",
       body: {
@@ -203,6 +226,72 @@ const VALID_KINDS = new Set<string>([
   "terminal",
   "hitl",
 ]);
+
+/**
+ * Translate native fleet `{phase, event, ...}` custom events into Mode B
+ * shape. Used when a workflow author uses the project's own _emit()
+ * helper rather than writing the explicit Mode B `kind` field.
+ *
+ * Event-name heuristic:
+ *   - started / start              → milestone, title="<phase>:started"
+ *   - finished / complete / done   → milestone, title="<phase>:finished"
+ *   - failed / error               → terminal (failed)
+ *   - progress / update            → status
+ *   - anything else                → status
+ */
+function translateFleetVocabulary(
+  phase: string,
+  fleetEvent: string,
+  data: Record<string, unknown>,
+): {
+  kind: LanggraphEventKind;
+  title: string;
+  summary: string;
+} {
+  const eventNorm = fleetEvent.toLowerCase();
+  const summary = summarizeFleetData(data);
+  if (eventNorm === "started" || eventNorm === "start") {
+    return { kind: "milestone", title: `${phase}:started`, summary };
+  }
+  if (
+    eventNorm === "finished" ||
+    eventNorm === "complete" ||
+    eventNorm === "completed" ||
+    eventNorm === "done"
+  ) {
+    return { kind: "milestone", title: `${phase}:finished`, summary };
+  }
+  if (eventNorm === "failed" || eventNorm === "error") {
+    return { kind: "terminal", title: `${phase}:${fleetEvent}`, summary };
+  }
+  return { kind: "status", title: `${phase}:${fleetEvent}`, summary };
+}
+
+/**
+ * Build a one-line summary from native fleet event payload. Prefers the
+ * fields most likely to be useful in a Slack message (pr_url, ticket_id,
+ * verdict, etc.) over raw JSON.
+ */
+function summarizeFleetData(data: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const tid = data.ticket_id;
+  if (typeof tid === "string") parts.push(tid);
+  const pr = data.pr_url;
+  if (typeof pr === "string") parts.push(pr);
+  const branch = data.branch;
+  if (typeof branch === "string" && !parts.includes(branch)) parts.push(branch);
+  const verdict = data.verdict;
+  if (typeof verdict === "string") parts.push(`verdict=${verdict}`);
+  const techSpec = data.tech_spec_path;
+  if (typeof techSpec === "string") parts.push(techSpec);
+  const productSpec = data.product_spec_path;
+  if (typeof productSpec === "string" && !parts.includes(productSpec))
+    parts.push(productSpec);
+  const rev = data.revision_count;
+  if (typeof rev === "number") parts.push(`rev=${rev}`);
+  if (parts.length > 0) return parts.join(" | ").slice(0, 280);
+  return summarizeForHumans(data);
+}
 
 function isValidKind(s: string): s is LanggraphEventKind {
   return VALID_KINDS.has(s);
