@@ -222,6 +222,105 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.kind).toBe("status");
   });
 
+  it("native fleet vocabulary {phase, event=started, ...} -> milestone", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            phase: "designer",
+            event: "started",
+            ticket_id: "BINGO-7",
+            product_spec_path: "feature/BINGO-7/product-spec.md",
+            revision_count: 0,
+          },
+        },
+        "flow-1",
+        12,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("designer:started");
+    expect(body.summary).toContain("BINGO-7");
+    expect(body.data).toMatchObject({ phase: "designer", event: "started" });
+  });
+
+  it("native fleet {phase, event=finished, pr_url} -> milestone w/ pr summary", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            phase: "coder",
+            event: "finished",
+            ticket_id: "BINGO-7",
+            pr_url: "https://github.com/ggettert/aidlc-sandbox/pull/42",
+            branch: "feature/BINGO-7",
+          },
+        },
+        "flow-1",
+        13,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("coder:finished");
+    expect(body.summary).toContain("BINGO-7");
+    expect(body.summary).toContain("pull/42");
+  });
+
+  it("native fleet {phase, event=failed, ...} -> terminal", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: { phase: "coder", event: "failed", error: "compile error" },
+        },
+        "flow-1",
+        14,
+      ),
+    );
+    expect(body.kind).toBe("terminal");
+    expect(body.title).toBe("coder:failed");
+  });
+
+  it("native fleet {phase, event=progress, ...} -> status", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: { phase: "reviewer", event: "progress", note: "halfway" },
+        },
+        "flow-1",
+        15,
+      ),
+    );
+    expect(body.kind).toBe("status");
+    expect(body.title).toBe("reviewer:progress");
+  });
+
+  it("explicit kind beats native fleet vocabulary", () => {
+    // If a workflow emits {kind: "decision", phase: "...", event: "..."},
+    // the explicit kind wins over the phase/event translation.
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            kind: "decision",
+            phase: "designer",
+            event: "started",
+            title: "escalation",
+            summary: "needs human",
+          },
+        },
+        "flow-1",
+        16,
+      ),
+    );
+    expect(body.kind).toBe("decision");
+    expect(body.title).toBe("escalation");
+  });
+
   it("custom without kind degrades to status", () => {
     const body = emit(
       classifyStreamFrame(
