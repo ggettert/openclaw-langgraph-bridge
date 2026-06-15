@@ -353,7 +353,15 @@ export function dispatchAndStream(
           if (result.kind === "metadata") {
             handlers.onRunId?.(result.runId);
           } else if (result.kind === "emit") {
-            if (result.body.kind === "terminal") sawTerminal = true;
+            // `sawTerminal` controls whether the synthetic stream-close
+            // terminal fires. Both `terminal` and `hitl` events are real
+            // endpoints — the workflow has either completed or paused at
+            // an interrupt. Suppress the synthetic terminal in both cases
+            // so we don't overwrite the hitl waiting state with a
+            // graph:end terminal.
+            if (result.body.kind === "terminal" || result.body.kind === "hitl") {
+              sawTerminal = true;
+            }
             handlers.onEvent(result.body);
           }
         }

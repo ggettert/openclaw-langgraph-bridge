@@ -104,6 +104,12 @@ describe("classifyStreamFrame — updates", () => {
     expect(body.title).toBe("node:coder");
   });
 
+  // NOTE: the suppression of synthetic-terminal-on-close when a hitl was
+  // already emitted lives in dispatchAndStream's frame loop, not in
+  // classifyStreamFrame. That behavior is exercised in the live smoke
+  // (see BINGO-INT trace 2026-06-15 21:45 UTC) and would be nice to
+  // refactor for unit testability later.
+
   it("updates with node='__interrupt__' is classified as hitl (regression: 2026-06-15)", () => {
     const body = emit(
       classifyStreamFrame(
