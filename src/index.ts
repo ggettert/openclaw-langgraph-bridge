@@ -8,6 +8,7 @@ import {
 } from "./webhook-handler.js";
 import { dispatchAndStream } from "./event-subscriber.js";
 import type { IncomingEventBody } from "./webhook-handler.js";
+import { formatInspect } from "./inspect-formatter.js";
 
 /**
  * openclaw-langgraph-bridge — Phase 2
@@ -134,7 +135,71 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         : undefined,
     };
 
-    // ---- 1. Tool: langgraph_dispatch ---------------------------------------
+    // ---- 1a. Tool: langgraph_inspect ---------------------------------------
+    // Read the current state of a flow this session owns. With no
+    // flow_id argument, returns the most recent flow created by this
+    // plugin in the current session.
+    api.registerTool(
+      (toolContext) => {
+        const sessionKey = toolContext.sessionKey;
+        return {
+          name: "langgraph_inspect",
+          label: "LangGraph Inspect",
+          description:
+            "Inspect a LangGraph flow this session previously dispatched. With no flow_id, returns the latest flow in the current session. Useful for catching up after wakes, checking whether a workflow is waiting on human input, or seeing the terminal summary of a finished run.",
+          parameters: Type.Object({
+            flow_id: Type.Optional(
+              Type.String({
+                description: "Specific flow id to inspect. Omit to inspect the latest flow in this session.",
+              }),
+            ),
+          }),
+          execute: async (_toolCallId: string, paramsUnknown: unknown) => {
+            const params = paramsUnknown as { flow_id?: string };
+            if (!sessionKey) {
+              return jsonResult({
+                status: "error" as const,
+                reason: "missing_session_key",
+              });
+            }
+            try {
+              const flows = api.runtime.tasks.managedFlows.bindSession({
+                sessionKey,
+              });
+              const record = params.flow_id
+                ? (flows.get(params.flow_id) as unknown)
+                : (flows.findLatest() as unknown);
+              if (!record) {
+                return jsonResult({
+                  status: "ok" as const,
+                  inspect: formatInspect({ flow: null }),
+                });
+              }
+              const flowId = (record as { flowId?: string }).flowId ?? params.flow_id;
+              const summary = flowId
+                ? ((flows.getTaskSummary?.(flowId) as unknown as string | undefined) ?? null)
+                : null;
+              return jsonResult({
+                status: "ok" as const,
+                inspect: formatInspect({
+                  flow: record as Parameters<typeof formatInspect>[0]["flow"],
+                  taskSummary: summary,
+                }),
+              });
+            } catch (err: unknown) {
+              return jsonResult({
+                status: "error" as const,
+                reason: "inspect_failed",
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }
+          },
+        };
+      },
+      { name: "langgraph_inspect" },
+    );
+
+    // ---- 1b. Tool: langgraph_dispatch --------------------------------------
     api.registerTool(
       (toolContext) => {
         const sessionKey = toolContext.sessionKey;
@@ -363,10 +428,138 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
       handler: buildHandler(handlerDeps),
     });
 
+    // ---- 3. inbound_claim hook for HITL resume -----------------------------
+    // When a human replies in a thread / DM where a langgraph flow is
+    // currently waiting on an interrupt, intercept BEFORE the agent
+    // routes the message: POST a Command(resume=...) to LangGraph using
+    // the captured interrupt_id, clear the wait state, then let the
+    // message pass through to the agent so it can acknowledge.
+    //
+    // Note: the SDK's `registerHook` is typed for the InternalHookHandler
+    // shape (one-arg event), but the runtime actually calls inbound_claim
+    // with (event, ctx) per PluginHookHandlers. We cast through unknown
+    // to use the richer signature.
+    const inboundClaimHandler = async (
+      event: {
+        content?: string;
+        sessionKey?: string;
+      },
+      ctx: { sessionKey?: string },
+    ): Promise<void> => {
+      const incomingSessionKey = event.sessionKey ?? ctx.sessionKey;
+      if (!incomingSessionKey) return;
+      const text = (event.content ?? "").trim();
+      if (!text) return;
+
+      try {
+        const flows = api.runtime.tasks.managedFlows.bindSession({
+          sessionKey: incomingSessionKey,
+        });
+        const flow = flows.findLatest() as
+          | undefined
+          | {
+              flowId: string;
+              status?: string;
+              revision?: number;
+              waitJson?: Record<string, unknown> | string | null;
+              stateJson?: Record<string, unknown> | string | null;
+            };
+        if (!flow || flow.status !== "waiting") return;
+
+        const waitJson = parseMaybeJson(flow.waitJson);
+        if (!waitJson || waitJson.kind !== "langgraph_interrupt") return;
+
+        const stateJson = parseMaybeJson(flow.stateJson) ?? {};
+        const threadId = stateJson.langgraph_thread_id as string | undefined;
+        const workflow = stateJson.workflow as string | undefined;
+        const baseUrl =
+          (stateJson.langgraph_base_url as string | undefined) ?? config.langgraphBaseUrl;
+        if (!threadId || !workflow || !baseUrl) {
+          logger?.warn?.(
+            `langgraph-bridge: inbound_claim found waiting flow=${flow.flowId} but missing thread/workflow/baseUrl; passing through`,
+          );
+          return;
+        }
+
+        // Resume the langgraph run with the human's reply as the resume payload.
+        const client = new LanggraphClient({
+          baseUrl,
+          timeoutMs: config.defaultTimeoutMs ?? 10_000,
+        });
+        await client.resumeRun(threadId, workflow, text, {
+          metadata: {
+            openclaw_flow_id: flow.flowId,
+            openclaw_session_key: incomingSessionKey,
+            openclaw_resume_source: "inbound_claim",
+          },
+        });
+
+        // Re-read the current revision before mutating; bindSession's get()
+        // would scope incorrectly here so we just resume optimistically with
+        // a fresh read.
+        const liveFlow = flows.get(flow.flowId) as
+          | { revision?: number }
+          | undefined;
+        const liveRevision = Number(liveFlow?.revision ?? flow.revision ?? 0);
+
+        flows.resume({
+          flowId: flow.flowId,
+          expectedRevision: liveRevision,
+          status: "running",
+          currentStep: "resumed",
+          stateJson: {
+            ...stateJson,
+            phase: "phase-3-resumed",
+            resume_text_preview: text.slice(0, 200),
+            resumed_at: Date.now(),
+          },
+        });
+
+        logger?.info?.(
+          `langgraph-bridge: resumed flow=${flow.flowId} thread=${threadId} from inbound message`,
+        );
+
+        // Don't claim the message — let the agent see it and acknowledge
+        // ("resumed, watching the run"). The plugin did the side-effect; the
+        // conversational ack is the agent's job.
+      } catch (err: unknown) {
+        const m = err instanceof Error ? err.message : String(err);
+        logger?.warn?.(`langgraph-bridge: inbound_claim resume failed: ${m}`);
+      }
+    };
+
+    // SAFETY: cast through unknown because registerHook's declared
+    // InternalHookHandler signature is single-arg, but the runtime
+    // dispatches inbound_claim with (event, ctx) per the typed hook
+    // signature documented in PluginHookHandlers.
+    api.registerHook(
+      "inbound_claim",
+      inboundClaimHandler as unknown as Parameters<
+        typeof api.registerHook
+      >[1],
+    );
+
     logger?.info?.(
-      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} (token configured: ${Boolean(config.callbackToken)})`,
+      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + inbound_claim hook (token configured: ${Boolean(config.callbackToken)})`,
     );
   },
 });
+
+function parseMaybeJson(
+  raw: Record<string, unknown> | string | null | undefined,
+): Record<string, unknown> | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return raw;
+}
 
 export default entry;

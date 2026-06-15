@@ -1,6 +1,6 @@
 {
   "name": "openclaw-langgraph-bridge",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "OpenClaw plugin bridging Kit-as-orchestrator with LangGraph workflows. Tools: langgraph_dispatch, langgraph_inspect. Webhook routes events back into Kit's session via enqueueSystemEvent + requestHeartbeat. Per-Slack-thread isolation via managedFlows.",
   "type": "module",
   "private": true,
