@@ -6,7 +6,8 @@ import {
   processEvent,
   type WebhookHandlerDeps,
 } from "./webhook-handler.js";
-import { subscribeToRunStream } from "./event-subscriber.js";
+import { dispatchAndStream } from "./event-subscriber.js";
+import type { IncomingEventBody } from "./webhook-handler.js";
 
 /**
  * openclaw-langgraph-bridge — Phase 2
@@ -211,16 +212,91 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 openclaw_session_key: sessionKey,
               });
 
-              const run = await client.createRun(threadId, {
-                assistantId: params.workflow,
-                input: params.input ?? null,
-                metadata: {
-                  openclaw_flow_id: flow.flowId,
-                  openclaw_session_key: sessionKey,
-                  openclaw_decision_only: decisionOnly,
-                },
-                webhook: webhookUrl,
+              // Phase 2 v3: atomic create+stream via POST /threads/{tid}/runs/stream.
+              // No race window where a fast run can finish before we subscribe.
+              // We get the run_id from the first SSE metadata frame and resolve
+              // it back to the caller via a promise.
+              const runIdPromise = new Promise<string>((resolve, reject) => {
+                const timer = setTimeout(
+                  () => reject(new Error("timed out waiting for run_id metadata frame")),
+                  timeoutMs,
+                );
+                let resolved = false;
+                const onEvent = (body: IncomingEventBody) => {
+                  try {
+                    processEvent({
+                      body,
+                      sessionKey,
+                      flowRevision: flow.revision,
+                      deps: handlerDeps,
+                    });
+                  } catch (err: unknown) {
+                    const m = err instanceof Error ? err.message : String(err);
+                    logger?.warn?.(
+                      `langgraph-bridge: subscriber processEvent failed flow=${flow.flowId}: ${m}`,
+                    );
+                  }
+                };
+                dispatchAndStream({
+                  baseUrl,
+                  threadId,
+                  flowId: flow.flowId,
+                  assistantId: params.workflow,
+                  input: params.input ?? null,
+                  metadata: {
+                    openclaw_flow_id: flow.flowId,
+                    openclaw_session_key: sessionKey,
+                    openclaw_decision_only: decisionOnly,
+                  },
+                  handlers: {
+                    onRunId: (runId) => {
+                      if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timer);
+                        resolve(runId);
+                      }
+                    },
+                    onEvent,
+                    onError: (err) => {
+                      logger?.warn?.(
+                        `langgraph-bridge: stream error flow=${flow.flowId}: ${err.message}`,
+                      );
+                      if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timer);
+                        reject(err);
+                      }
+                    },
+                    onClose: (sawTerminal) => {
+                      logger?.info?.(
+                        `langgraph-bridge: stream closed flow=${flow.flowId} sawTerminal=${sawTerminal}`,
+                      );
+                      // If the stream ended without a terminal-kind event,
+                      // emit a synthetic terminal so the agent learns the
+                      // run is over.
+                      if (!sawTerminal) {
+                        try {
+                          processEvent({
+                            body: {
+                              kind: "terminal",
+                              flow_id: flow.flowId,
+                              title: "graph:end",
+                              summary: "workflow completed (no error)",
+                            },
+                            sessionKey,
+                            flowRevision: flow.revision,
+                            deps: handlerDeps,
+                          });
+                        } catch {
+                          /* best effort */
+                        }
+                      }
+                    },
+                  },
+                });
               });
+
+              const runId = await runIdPromise;
 
               flows.resume({
                 flowId: flow.flowId,
@@ -231,71 +307,29 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   decision_only: decisionOnly,
                   langgraph_base_url: baseUrl,
                   langgraph_thread_id: threadId,
-                  langgraph_run_id: run.runId,
+                  langgraph_run_id: runId,
                   webhook_url: webhookUrl ?? null,
-                  phase: "phase-2-dispatched",
+                  phase: "phase-2-v3-streaming",
                 },
                 currentStep: "running",
               });
 
-              // Phase 2 v2: spin up the SSE subscriber that translates
-              // LangGraph native events into our Mode B kinds and hands
-              // them to processEvent. Fire-and-forget; the subscriber
-              // closes itself when the stream ends.
-              subscribeToRunStream({
-                baseUrl,
-                threadId,
-                runId: run.runId,
-                flowId: flow.flowId,
-                handlers: {
-                  onEvent: (body) => {
-                    try {
-                      processEvent({
-                        body,
-                        sessionKey,
-                        // We re-read revision via lookup() inside
-                        // processEvent’s SDK calls; pass the latest
-                        // we know here. Stale revisions will be
-                        // refused by managedFlows and the SDK call
-                        // will return applied:false — acceptable for
-                        // phase-2 noise; phase-4 will tighten.
-                        flowRevision: flow.revision,
-                        deps: handlerDeps,
-                      });
-                    } catch (err: unknown) {
-                      const m = err instanceof Error ? err.message : String(err);
-                      logger?.warn?.(
-                        `langgraph-bridge: subscriber processEvent failed flow=${flow.flowId}: ${m}`,
-                      );
-                    }
-                  },
-                  onError: (err) => {
-                    logger?.warn?.(
-                      `langgraph-bridge: subscriber error flow=${flow.flowId}: ${err.message}`,
-                    );
-                  },
-                  onClose: (reason) => {
-                    logger?.info?.(
-                      `langgraph-bridge: subscriber closed flow=${flow.flowId} reason=${reason}`,
-                    );
-                  },
-                },
-              });
-
               logger?.info?.(
-                `langgraph_dispatch: dispatched flow=${flow.flowId} thread=${threadId} run=${run.runId} workflow=${params.workflow}`,
+                `langgraph_dispatch: dispatched flow=${flow.flowId} thread=${threadId} run=${runId} workflow=${params.workflow}`,
               );
 
               return jsonResult({
                 status: "accepted" as const,
-                phase: "phase-2",
+                phase: "phase-2-v3",
                 flow_id: flow.flowId,
                 langgraph_thread_id: threadId,
-                langgraph_run_id: run.runId,
+                langgraph_run_id: runId,
                 workflow: params.workflow,
                 session_key: sessionKey,
                 decision_only: decisionOnly,
-                webhook_url: webhookUrl ?? "(not configured — events will not route back)",
+                webhook_url:
+                  webhookUrl ??
+                  "(not configured — terminal callback skipped; SSE stream still active)",
               });
             } catch (err: unknown) {
               const message =

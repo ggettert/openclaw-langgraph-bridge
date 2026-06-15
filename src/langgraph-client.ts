@@ -25,8 +25,20 @@ export type LanggraphCreateRunOptions = {
   input?: Record<string, unknown> | null;
   /** Stored on the run; LangGraph round-trips this verbatim to webhook callers. */
   metadata?: Record<string, unknown>;
-  /** Optional webhook URL LangGraph will POST run events to. */
+  /** Optional webhook URL LangGraph will POST run events to (terminal-only on LangGraph). */
   webhook?: string;
+  /**
+   * Stream modes to persist on the run. We pass ["events"] so the SSE
+   * subscriber can join + replay even if it connects after a fast run
+   * already completed.
+   */
+  streamMode?: string[];
+  /**
+   * Whether to persist stream chunks for late subscribers. Phase 2 v2
+   * needs this true so the subscriber can read the full event history
+   * even if it loses the race with a very fast workflow.
+   */
+  streamResumable?: boolean;
 };
 
 export type LanggraphCreateRunResult = {
@@ -95,6 +107,12 @@ export class LanggraphClient {
     }
     if (opts.webhook) {
       body.webhook = opts.webhook;
+    }
+    if (opts.streamMode && opts.streamMode.length > 0) {
+      body.stream_mode = opts.streamMode;
+    }
+    if (opts.streamResumable !== undefined) {
+      body.stream_resumable = opts.streamResumable;
     }
     const res = await this.fetch(`/threads/${encodeURIComponent(threadId)}/runs`, {
       method: "POST",

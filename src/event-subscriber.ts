@@ -1,151 +1,188 @@
 /**
- * Phase 2 v2 — LangGraph SSE event subscriber.
+ * Phase 2 v3 — LangGraph streaming SSE consumer (rewritten against the
+ * documented v2 stream-mode API).
  *
- * Why this exists: LangGraph's native `webhook` field on a run is fired
- * exactly once, on terminal state. Per-step events (node started, node
- * finished, error, interrupt) only come through the SSE streaming endpoint
- * `GET /threads/{thread_id}/runs/{run_id}/stream?stream_mode=events`.
+ * Architecture (read this before the code):
  *
- * Mode B (status absorbs silently, decision/milestone/terminal/hitl wake
- * the agent) needs per-step visibility, so we subscribe to that stream
- * for each dispatched run and translate LangGraph's native event shape
- * into our internal `{kind, flow_id, title, summary, data}` event shape,
- * then hand to the same `processEvent` the webhook handler uses.
+ * 1. We use `POST /threads/{tid}/runs/stream` rather than separate
+ *    `createRun` + `GET /runs/{rid}/stream`. The streaming-create
+ *    endpoint atomically starts the run AND opens the SSE stream as
+ *    its response body, so there's no race window where a fast run
+ *    can complete before we connect.
  *
- * One subscriber per dispatched run. The dispatch tool starts it
- * fire-and-forget. The subscriber closes when LangGraph closes the stream
- * (terminal) or when an abort signal is raised.
+ * 2. We request `stream_mode=["updates","custom"]`. Per the LangChain
+ *    docs:
+ *      - `updates` yields a `StreamPart` of type `"updates"` whose
+ *        `data` is `{<node_name>: <node_state_delta>}` after each
+ *        step. This is our milestone signal.
+ *      - `custom` yields a `StreamPart` of type `"custom"` whose
+ *        `data` is whatever the workflow author wrote via
+ *        `get_stream_writer()`. This is the Mode B escape hatch: if
+ *        the workflow wants to emit a `{kind: "decision", ...}` event,
+ *        it writes a JSON object with our shape.
+ *
+ * 3. SSE frames from the LangGraph server use the standard wire
+ *    format: `event: <name>` + `data: <json>` separated by blank lines.
+ *    The first frame is always `event: metadata` with the `run_id`.
+ *    Subsequent frames carry one of: `updates`, `custom`, `messages`,
+ *    `values`, `error`, `events` (the v1 internal-event firehose; we
+ *    do not subscribe to it but still tolerate it gracefully).
+ *
+ * 4. The classifier (`classifyStreamFrame`) maps each frame to our
+ *    internal Mode B `{kind, flow_id, ...}` event body. Mapping:
+ *      - `metadata`             → null (used out-of-band for run_id)
+ *      - `updates` (sub-node)   → milestone
+ *      - `error`                → terminal (failed)
+ *      - `custom` (kind=...)    → pass through with author's kind
+ *      - `custom` (other)       → status
+ *      - everything else        → null (skip)
+ *
+ *    Stream-end (no terminal-kind event seen) is treated as a synthetic
+ *    `terminal` (success) by the caller, not by this function.
  */
 
 import type { IncomingEventBody } from "./webhook-handler.js";
 import type { LanggraphEventKind } from "./event-classifier.js";
 
-type LanggraphStreamEvent = {
-  event?: string;
-  data?: unknown;
-  name?: string;
-  tags?: unknown[];
-  run_id?: string;
-  metadata?: Record<string, unknown>;
-  parent_ids?: unknown[];
+/** One parsed SSE frame from the LangGraph stream. */
+export type ParsedStreamFrame = {
+  event: string;
+  data: unknown;
 };
 
-export type ClassifiedEvent = {
-  body: IncomingEventBody;
-};
+/** Result of classifying a single frame. */
+export type ClassifyResult =
+  | { kind: "skip" }
+  | { kind: "metadata"; runId: string }
+  | { kind: "emit"; body: IncomingEventBody };
 
 /**
- * Pure function: take a single LangGraph stream event and decide whether
- * to emit something into our processEvent pipeline.
- *
- * Mapping (initial heuristic — Phase 4 will tune as we see real workflows):
- *   - on_chain_start  on a NODE (not the whole graph) → milestone
- *   - on_chain_end    on a NODE → status (covers the bulk of noise)
- *   - on_tool_*       → status (deep noise)
- *   - error event     → terminal (failed)
- *   - on_chain_end    on the root graph → terminal (success)
- *   - interrupt event → hitl
- *
- * The root graph is identified by the absence of `metadata.langgraph_node`.
- * Sub-node events always carry `langgraph_node`.
+ * Pure function: classify one SSE frame. Returns either `skip` (no-op),
+ * `metadata` (parse run_id; emit nothing), or `emit` with the Mode B
+ * body to hand to processEvent.
  */
-export function classifyStreamEvent(
-  streamEvent: LanggraphStreamEvent,
+export function classifyStreamFrame(
+  frame: ParsedStreamFrame,
   flowId: string,
   seq: number,
-): IncomingEventBody | null {
-  const evtType = streamEvent.event;
-  const metadata = streamEvent.metadata ?? {};
-  const node = metadata.langgraph_node as string | undefined;
-  const step = metadata.langgraph_step as number | undefined;
-
-  // Hard errors → terminal (failed)
-  if (evtType === "error") {
-    const data = streamEvent.data as { error?: string; message?: string } | undefined;
-    return {
-      kind: "terminal",
-      flow_id: flowId,
-      seq,
-      title: `error: ${data?.error ?? "unknown"}`,
-      summary: data?.message ?? "(no message)",
-      data: { error: data?.error, message: data?.message },
-    };
-  }
-
-  // Interrupt → hitl
-  if (evtType === "interrupt" || evtType === "on_interrupt") {
-    const data = streamEvent.data as Record<string, unknown> | undefined;
-    return {
-      kind: "hitl",
-      flow_id: flowId,
-      seq,
-      title: `interrupt: ${node ?? "graph"}`,
-      summary: summarizeForHumans(data),
-      data,
-      interrupt_id: (data?.interrupt_id as string) ?? `seq-${seq}`,
-    };
-  }
-
-  // on_chain_start
-  if (evtType === "on_chain_start") {
-    if (!node) {
-      // Whole-graph start — internal noise, skip.
-      return null;
+): ClassifyResult {
+  // Metadata frame: first frame on every stream. We use it to capture
+  // run_id but do not surface an event to the agent.
+  if (frame.event === "metadata") {
+    const data = frame.data as { run_id?: string } | undefined;
+    if (data?.run_id) {
+      return { kind: "metadata", runId: data.run_id };
     }
-    return {
-      kind: "milestone",
-      flow_id: flowId,
-      seq,
-      title: `node:${node}:start`,
-      summary: `step ${step ?? "?"} \u2192 ${node}`,
-      data: { node, step },
-    };
+    return { kind: "skip" };
   }
 
-  // on_chain_end
-  if (evtType === "on_chain_end") {
-    if (!node) {
-      // Root graph ended → terminal (success)
-      const data = streamEvent.data as Record<string, unknown> | undefined;
-      return {
+  // Error frame: terminal-failed.
+  if (frame.event === "error") {
+    const data = frame.data as { error?: string; message?: string } | undefined;
+    return {
+      kind: "emit",
+      body: {
         kind: "terminal",
         flow_id: flowId,
         seq,
-        title: "graph:end",
-        summary: "workflow completed",
-        data,
-      };
+        title: `error: ${data?.error ?? "unknown"}`,
+        summary: data?.message ?? "(no message)",
+        data: { error: data?.error, message: data?.message },
+      },
+    };
+  }
+
+  // Updates frame: {type: "updates", ns: [...], data: {<node>: <delta>}}.
+  // Per docs, top-level wire shape from the HTTP API is the raw {type,
+  // ns, data} object — but the dev server we hit is actually emitting
+  // it as `event: updates` with a JSON body of {<node>: <delta>}.
+  // Tolerate both shapes (test both, see test file).
+  if (frame.event === "updates") {
+    const data = frame.data as Record<string, unknown> | undefined;
+    if (!data || typeof data !== "object") return { kind: "skip" };
+
+    // If the body looks like a v2 StreamPart wrapper, unwrap.
+    const payload =
+      "type" in data && (data as { type?: string }).type === "updates"
+        ? ((data as { data?: Record<string, unknown> }).data ?? {})
+        : data;
+
+    // Each key is a node name; we surface one milestone per key.
+    const nodeNames = Object.keys(payload);
+    if (nodeNames.length === 0) return { kind: "skip" };
+
+    // Take the first node name; for multi-node updates we'd
+    // emit several, but Phase 2 emits one summary event.
+    const node = nodeNames[0]!;
+    const delta = (payload as Record<string, unknown>)[node];
+    return {
+      kind: "emit",
+      body: {
+        kind: "milestone",
+        flow_id: flowId,
+        seq,
+        title: `node:${node}`,
+        summary: summarizeForHumans(delta),
+        data: { node, delta },
+      },
+    };
+  }
+
+  // Custom frame: the workflow author wrote via get_stream_writer().
+  // If the data carries a recognizable `kind`, pass it through as Mode
+  // B. Otherwise treat as status.
+  if (frame.event === "custom") {
+    const data = frame.data as Record<string, unknown> | undefined;
+    if (data && typeof data === "object") {
+      const authorKind = data.kind as string | undefined;
+      if (authorKind && isValidKind(authorKind)) {
+        return {
+          kind: "emit",
+          body: {
+            kind: authorKind,
+            flow_id: flowId,
+            seq,
+            title: (data.title as string) ?? `custom:${authorKind}`,
+            summary: (data.summary as string) ?? summarizeForHumans(data),
+            data: data,
+            interrupt_id: data.interrupt_id as string | undefined,
+          },
+        };
+      }
     }
-    // Node ended — status noise
     return {
-      kind: "status",
-      flow_id: flowId,
-      seq,
-      title: `node:${node}:end`,
-      summary: `step ${step ?? "?"} done`,
-      data: { node, step },
+      kind: "emit",
+      body: {
+        kind: "status",
+        flow_id: flowId,
+        seq,
+        title: "custom",
+        summary: summarizeForHumans(data),
+        data: data as Record<string, unknown> | undefined,
+      },
     };
   }
 
-  // Tool calls — deep noise
-  if (evtType?.startsWith("on_tool_")) {
-    return {
-      kind: "status",
-      flow_id: flowId,
-      seq,
-      title: `${evtType}: ${streamEvent.name ?? "tool"}`,
-      summary: "",
-      data: { name: streamEvent.name },
-    };
-  }
+  // Everything else (messages, values, events, checkpoints, tasks,
+  // debug, end) → skip silently. The agent doesn't need token-level
+  // streams in Mode B.
+  return { kind: "skip" };
+}
 
-  // Anything else: skip. We don't want to surface every LangChain
-  // model-start/model-end event yet — way too noisy.
-  return null;
+const VALID_KINDS = new Set<string>([
+  "status",
+  "milestone",
+  "decision",
+  "terminal",
+  "hitl",
+]);
+
+function isValidKind(s: string): s is LanggraphEventKind {
+  return VALID_KINDS.has(s);
 }
 
 function summarizeForHumans(data: unknown): string {
-  if (!data) return "";
+  if (data === null || data === undefined) return "";
   if (typeof data === "string") return data.slice(0, 280);
   try {
     return JSON.stringify(data).slice(0, 280);
@@ -154,39 +191,77 @@ function summarizeForHumans(data: unknown): string {
   }
 }
 
-export type SubscriberHandlers = {
+// ---------------------------------------------------------------------------
+// SSE reader
+// ---------------------------------------------------------------------------
+
+export type StreamHandlers = {
+  /** Emitted exactly once when the metadata frame parses. */
+  onRunId?: (runId: string) => void;
+  /** Emitted for each frame that classifies to `emit`. */
   onEvent: (body: IncomingEventBody) => void;
+  /** Emitted when the stream errors out at the transport layer. */
   onError?: (err: Error) => void;
-  onClose?: (reason: string) => void;
+  /**
+   * Emitted exactly once when the stream closes naturally. The boolean
+   * indicates whether we saw any terminal-kind event during the stream.
+   */
+  onClose?: (sawTerminal: boolean) => void;
+};
+
+export type StreamingDispatchParams = {
+  baseUrl: string;
+  threadId: string;
+  flowId: string;
+  assistantId: string;
+  input?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
+  handlers: StreamHandlers;
+  fetchImpl?: typeof fetch;
 };
 
 /**
- * Open an SSE subscription to a LangGraph run stream. Returns an
- * AbortController; call `.abort()` to stop.
- *
- * NOTE: this is fire-and-forget from the caller. Errors are not
- * propagated up — they're sent to `onError` if set, otherwise swallowed.
+ * Atomic create+stream: opens the SSE response from
+ * `POST /threads/{tid}/runs/stream` and pumps frames through the
+ * classifier into the handlers. Returns an `AbortController` for
+ * cancellation. Returns immediately; the streaming happens in the
+ * background.
  */
-export function subscribeToRunStream(params: {
-  baseUrl: string;
-  threadId: string;
-  runId: string;
-  flowId: string;
-  handlers: SubscriberHandlers;
-}): AbortController {
-  const { baseUrl, threadId, runId, flowId, handlers } = params;
-  const url =
-    baseUrl.replace(/\/+$/, "") +
-    `/threads/${encodeURIComponent(threadId)}/runs/${encodeURIComponent(runId)}/stream?stream_mode=events`;
+export function dispatchAndStream(
+  params: StreamingDispatchParams,
+): AbortController {
+  const {
+    baseUrl,
+    threadId,
+    flowId,
+    assistantId,
+    input,
+    metadata,
+    handlers,
+    fetchImpl,
+  } = params;
 
   const controller = new AbortController();
+  const url =
+    baseUrl.replace(/\/+$/, "") +
+    `/threads/${encodeURIComponent(threadId)}/runs/stream`;
 
-  // Spawn the long-running task. Don't await it in the caller.
   (async () => {
+    let sawTerminal = false;
+    const f = fetchImpl ?? fetch;
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: { accept: "text/event-stream" },
+      const res = await f(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          assistant_id: assistantId,
+          input: input ?? null,
+          metadata: metadata ?? undefined,
+          stream_mode: ["updates", "custom"],
+        }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -199,32 +274,49 @@ export function subscribeToRunStream(params: {
         return;
       }
 
-      let seq = 0;
       const reader = res.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffered = "";
+      let seq = 0;
 
-      // Loop the SSE frames.
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         buffered += decoder.decode(value, { stream: true });
 
-        // SSE frames are separated by blank lines.
-        let frameEnd = buffered.indexOf("\n\n");
-        while (frameEnd !== -1) {
-          const frame = buffered.slice(0, frameEnd);
-          buffered = buffered.slice(frameEnd + 2);
-          handleSseFrame(frame, flowId, () => seq++, handlers);
-          frameEnd = buffered.indexOf("\n\n");
+        // SSE frames may be separated by "\n\n" or "\r\n\r\n" depending
+        // on the server. The LangGraph dev server emits CRLF. Handle both.
+        for (;;) {
+          const crlfIdx = buffered.indexOf("\r\n\r\n");
+          const lfIdx = buffered.indexOf("\n\n");
+          let frameEnd = -1;
+          let sepLen = 0;
+          if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx <= lfIdx)) {
+            frameEnd = crlfIdx;
+            sepLen = 4;
+          } else if (lfIdx !== -1) {
+            frameEnd = lfIdx;
+            sepLen = 2;
+          }
+          if (frameEnd === -1) break;
+          const raw = buffered.slice(0, frameEnd);
+          buffered = buffered.slice(frameEnd + sepLen);
+          const frame = parseSseFrame(raw);
+          if (!frame) continue;
+          const result = classifyStreamFrame(frame, flowId, seq++);
+          if (result.kind === "metadata") {
+            handlers.onRunId?.(result.runId);
+          } else if (result.kind === "emit") {
+            if (result.body.kind === "terminal") sawTerminal = true;
+            handlers.onEvent(result.body);
+          }
         }
       }
 
-      handlers.onClose?.("stream-ended");
+      handlers.onClose?.(sawTerminal);
     } catch (err: unknown) {
-      const wasAborted = (err as { name?: string }).name === "AbortError";
-      if (wasAborted) {
-        handlers.onClose?.("aborted");
+      if ((err as { name?: string }).name === "AbortError") {
+        handlers.onClose?.(sawTerminal);
         return;
       }
       handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
@@ -234,38 +326,24 @@ export function subscribeToRunStream(params: {
   return controller;
 }
 
-function handleSseFrame(
-  frame: string,
-  flowId: string,
-  nextSeq: () => number,
-  handlers: SubscriberHandlers,
-): void {
-  // Frame is one or more `field: value` lines. We only care about `event:`
-  // and `data:`. Data may span multiple lines.
-  let eventName: string | undefined;
+/** Parse a single SSE frame ("event: foo\ndata: ..."). Pure. */
+export function parseSseFrame(raw: string): ParsedStreamFrame | null {
+  let eventName = "message";
   const dataLines: string[] = [];
-  for (const line of frame.split("\n")) {
+  // SSE lines may end with \n or \r\n. Strip \r before checking prefixes.
+  for (const rawLine of raw.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.startsWith("event:")) {
       eventName = line.slice(6).trim();
     } else if (line.startsWith("data:")) {
       dataLines.push(line.slice(5).trimStart());
     }
   }
-  if (dataLines.length === 0) return;
-
-  let data: unknown;
+  if (dataLines.length === 0) return null;
   try {
-    data = JSON.parse(dataLines.join("\n"));
+    const data: unknown = JSON.parse(dataLines.join("\n"));
+    return { event: eventName, data };
   } catch {
-    // Best-effort: not JSON, drop it. Could log if we had a logger here.
-    return;
+    return null;
   }
-
-  const streamEvent: LanggraphStreamEvent = {
-    event: eventName,
-    ...(typeof data === "object" && data !== null ? (data as object) : { data }),
-  };
-
-  const body = classifyStreamEvent(streamEvent, flowId, nextSeq());
-  if (body) handlers.onEvent(body);
 }

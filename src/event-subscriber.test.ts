@@ -1,118 +1,194 @@
 import { describe, expect, it } from "vitest";
-import { classifyStreamEvent } from "./event-subscriber.js";
+import {
+  classifyStreamFrame,
+  parseSseFrame,
+  type ClassifyResult,
+} from "./event-subscriber.js";
 
-describe("classifyStreamEvent", () => {
-  it("error event becomes terminal", () => {
-    const body = classifyStreamEvent(
-      { event: "error", data: { error: "KeyError", message: "'ticket_id'" } },
+function emit(r: ClassifyResult) {
+  expect(r.kind).toBe("emit");
+  if (r.kind !== "emit") throw new Error("not emit");
+  return r.body;
+}
+
+describe("parseSseFrame", () => {
+  it("parses event + data (LF lines)", () => {
+    const f = parseSseFrame('event: metadata\ndata: {"run_id":"r1","attempt":1}');
+    expect(f).toEqual({ event: "metadata", data: { run_id: "r1", attempt: 1 } });
+  });
+
+  it("parses event + data (CRLF lines) — LangGraph dev server wire format", () => {
+    const f = parseSseFrame('event: metadata\r\ndata: {"run_id":"r1","attempt":1}');
+    expect(f).toEqual({ event: "metadata", data: { run_id: "r1", attempt: 1 } });
+  });
+
+  it("defaults event to message when only data present", () => {
+    const f = parseSseFrame('data: {"x":1}');
+    expect(f).toEqual({ event: "message", data: { x: 1 } });
+  });
+
+  it("returns null on no data lines", () => {
+    expect(parseSseFrame("event: foo")).toBeNull();
+  });
+
+  it("returns null on invalid JSON", () => {
+    expect(parseSseFrame("event: x\ndata: not-json")).toBeNull();
+  });
+});
+
+describe("classifyStreamFrame — metadata", () => {
+  it("captures run_id without emitting an event", () => {
+    const r = classifyStreamFrame(
+      { event: "metadata", data: { run_id: "r1", attempt: 1 } },
       "flow-1",
       0,
     );
-    expect(body).not.toBeNull();
-    expect(body!.kind).toBe("terminal");
-    expect(body!.title).toContain("error: KeyError");
-    expect(body!.summary).toBe("'ticket_id'");
+    expect(r.kind).toBe("metadata");
+    if (r.kind !== "metadata") throw new Error("expected metadata");
+    expect(r.runId).toBe("r1");
   });
 
-  it("interrupt event becomes hitl", () => {
-    const body = classifyStreamEvent(
-      {
-        event: "interrupt",
-        data: { interrupt_id: "i-42", prompt: "approve?" },
-        metadata: { langgraph_node: "approval_gate" },
-      },
+  it("skips metadata frame with no run_id", () => {
+    const r = classifyStreamFrame(
+      { event: "metadata", data: { attempt: 1 } },
       "flow-1",
       0,
     );
-    expect(body).not.toBeNull();
-    expect(body!.kind).toBe("hitl");
-    expect(body!.interrupt_id).toBe("i-42");
-    expect(body!.title).toContain("approval_gate");
+    expect(r.kind).toBe("skip");
+  });
+});
+
+describe("classifyStreamFrame — error", () => {
+  it("error frame becomes terminal (failed)", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "error",
+          data: { error: "KeyError", message: "'ticket_id'" },
+        },
+        "flow-1",
+        5,
+      ),
+    );
+    expect(body.kind).toBe("terminal");
+    expect(body.title).toContain("error: KeyError");
+    expect(body.summary).toBe("'ticket_id'");
+    expect(body.seq).toBe(5);
+  });
+});
+
+describe("classifyStreamFrame — updates", () => {
+  it("raw {node: delta} body becomes milestone", () => {
+    const body = emit(
+      classifyStreamFrame(
+        { event: "updates", data: { coder: { tokens: 42 } } },
+        "flow-1",
+        2,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("node:coder");
+    expect(body.summary).toContain("tokens");
+    expect(body.data).toMatchObject({ node: "coder" });
   });
 
-  it("on_chain_start on the root graph is skipped (no node)", () => {
-    const body = classifyStreamEvent(
-      {
-        event: "on_chain_start",
-        name: "fleet",
-        metadata: {},
-      },
+  it("v2 StreamPart wrapper {type:'updates', data:{...}} is unwrapped", () => {
+    const body = emit(
+      classifyStreamFrame(
+        { event: "updates", data: { type: "updates", ns: [], data: { coder: { ok: true } } } },
+        "flow-1",
+        3,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("node:coder");
+  });
+
+  it("empty updates payload is skipped", () => {
+    const r = classifyStreamFrame(
+      { event: "updates", data: {} },
       "flow-1",
       0,
     );
-    expect(body).toBeNull();
+    expect(r.kind).toBe("skip");
   });
+});
 
-  it("on_chain_start on a sub-node becomes milestone", () => {
-    const body = classifyStreamEvent(
-      {
-        event: "on_chain_start",
-        name: "coder",
-        metadata: { langgraph_node: "coder", langgraph_step: 3 },
-      },
-      "flow-1",
-      5,
+describe("classifyStreamFrame — custom (workflow author escape hatch)", () => {
+  it("custom with kind=decision passes through as decision", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            kind: "decision",
+            title: "needs-input",
+            summary: "which target env?",
+          },
+        },
+        "flow-1",
+        7,
+      ),
     );
-    expect(body).not.toBeNull();
-    expect(body!.kind).toBe("milestone");
-    expect(body!.title).toBe("node:coder:start");
-    expect(body!.summary).toContain("3");
-    expect(body!.seq).toBe(5);
+    expect(body.kind).toBe("decision");
+    expect(body.title).toBe("needs-input");
+    expect(body.summary).toBe("which target env?");
   });
 
-  it("on_chain_end on the root graph becomes terminal (success)", () => {
-    const body = classifyStreamEvent(
-      { event: "on_chain_end", name: "fleet", metadata: {}, data: { output: "ok" } },
-      "flow-1",
-      99,
+  it("custom with kind=hitl carries interrupt_id", () => {
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            kind: "hitl",
+            title: "approval",
+            summary: "approve deploy?",
+            interrupt_id: "i-42",
+          },
+        },
+        "flow-1",
+        8,
+      ),
     );
-    expect(body).not.toBeNull();
-    expect(body!.kind).toBe("terminal");
-    expect(body!.title).toBe("graph:end");
+    expect(body.kind).toBe("hitl");
+    expect(body.interrupt_id).toBe("i-42");
   });
 
-  it("on_chain_end on a sub-node becomes status", () => {
-    const body = classifyStreamEvent(
-      {
-        event: "on_chain_end",
-        name: "coder",
-        metadata: { langgraph_node: "coder", langgraph_step: 3 },
-      },
-      "flow-1",
-      6,
+  it("custom with unknown kind degrades to status", () => {
+    const body = emit(
+      classifyStreamFrame(
+        { event: "custom", data: { kind: "totally-made-up", note: "hi" } },
+        "flow-1",
+        9,
+      ),
     );
-    expect(body).not.toBeNull();
-    expect(body!.kind).toBe("status");
-    expect(body!.title).toBe("node:coder:end");
+    expect(body.kind).toBe("status");
   });
 
-  it("on_tool_* becomes status", () => {
-    const body = classifyStreamEvent(
-      { event: "on_tool_start", name: "shell" },
-      "flow-1",
-      0,
+  it("custom without kind degrades to status", () => {
+    const body = emit(
+      classifyStreamFrame(
+        { event: "custom", data: { progress: 50 } },
+        "flow-1",
+        10,
+      ),
     );
-    expect(body).not.toBeNull();
-    expect(body!.kind).toBe("status");
-    expect(body!.title).toContain("on_tool_start");
+    expect(body.kind).toBe("status");
+    expect(body.summary).toContain("progress");
   });
+});
 
-  it("unrelated events return null (model_start etc.)", () => {
+describe("classifyStreamFrame — skip", () => {
+  it("messages, values, events are skipped", () => {
     expect(
-      classifyStreamEvent({ event: "on_chat_model_start" }, "flow-1", 0),
-    ).toBeNull();
-    expect(classifyStreamEvent({ event: "metadata" }, "flow-1", 0)).toBeNull();
-  });
-
-  it("flow_id is propagated", () => {
-    const body = classifyStreamEvent(
-      {
-        event: "on_chain_start",
-        metadata: { langgraph_node: "coder" },
-      },
-      "my-flow-99",
-      0,
-    );
-    expect(body!.flow_id).toBe("my-flow-99");
+      classifyStreamFrame({ event: "messages", data: {} }, "f", 0).kind,
+    ).toBe("skip");
+    expect(
+      classifyStreamFrame({ event: "values", data: {} }, "f", 0).kind,
+    ).toBe("skip");
+    expect(
+      classifyStreamFrame({ event: "events", data: {} }, "f", 0).kind,
+    ).toBe("skip");
   });
 });
