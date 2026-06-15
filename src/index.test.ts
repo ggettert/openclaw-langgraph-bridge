@@ -13,4 +13,15 @@ describe("openclaw-langgraph-bridge", () => {
     const meta = getToolPluginMetadata(entry);
     expect(meta?.id).toBe("openclaw-langgraph-bridge");
   });
+
+  it("declares the expected config keys", () => {
+    const meta = getToolPluginMetadata(entry);
+    const props = meta?.configSchema?.properties ?? {};
+    expect(Object.keys(props).sort()).toEqual([
+      "allowedWorkflows",
+      "callbackToken",
+      "defaultTimeoutMs",
+      "langgraphBaseUrl",
+    ]);
+  });
 });

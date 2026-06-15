@@ -79,11 +79,12 @@ Ship a single stubbed `langgraph_dispatch` tool. Goal is to validate plugin load
 
 Wire `langgraph_dispatch` to actual `managedFlows` + LangGraph HTTP:
 
-- [ ] Tool factory closes over `api.runtime.tasks.managedFlows` + tool context sessionKey
-- [ ] `createManaged` writes the flow with workflow metadata and callback URL/token
-- [ ] HTTP client POSTs to LangGraph `/runs` with `metadata = {flow_id, callback_url, callback_token}`
-- [ ] Tool returns `{flow_id, run_id, langgraph_thread_id}`
-- [ ] First end-to-end smoke: agent dispatches → LangGraph creates the run → no events back yet, but the flow exists in `openclaw tasks`
+- [x] Tool factory closes over `api.runtime.tasks.managedFlows` + tool context sessionKey
+- [x] `createManaged` writes the flow with workflow metadata in `stateJson`
+- [x] Minimal HTTP client (`src/langgraph-client.ts`) for `/ok`, `/info`, `POST /threads`, `POST /threads/{tid}/runs`
+- [x] Tool returns `{flow_id, langgraph_thread_id, langgraph_run_id, session_key}` plus run metadata carrying `openclaw_flow_id` + `openclaw_session_key` for Phase 2 webhook routing
+- [x] Standalone live smoke (`npm run smoke`) — verified end-to-end against 10.41.1.198:2024 (LangGraph 0.10.0, assistant `fleet`)
+- [ ] **In-gateway smoke**: install on this gateway, dispatch from a Slack thread, confirm the agent gets `{flow_id, run_id, thread_id}` back and a managed flow appears in `openclaw tasks`
 
 ### Phase 2 — webhook + classification
 

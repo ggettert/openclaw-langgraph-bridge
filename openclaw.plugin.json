@@ -8,7 +8,10 @@
     "properties": {
       "langgraphBaseUrl": {
         "type": "string",
-        "description": "Base URL of the LangGraph server. Will be used by Phase 1 dispatch when wired."
+        "description": "Base URL of the LangGraph server. Phase 1 tool calls fail fast when unset.",
+        "examples": [
+          "http://10.41.1.198:2024"
+        ]
       },
       "callbackToken": {
         "type": "string",
@@ -19,7 +22,13 @@
         "items": {
           "type": "string"
         },
-        "description": "Allowlist of workflow ids the agent may dispatch. Empty/unset disables the allowlist."
+        "description": "Allowlist of assistant ids / graph ids the agent may dispatch. Empty/unset disables the allowlist."
+      },
+      "defaultTimeoutMs": {
+        "type": "integer",
+        "description": "Per-request timeout for the LangGraph HTTP client. Default 10000.",
+        "minimum": 100,
+        "maximum": 120000
       }
     }
   },

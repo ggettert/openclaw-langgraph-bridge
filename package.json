@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "plugin:build": "npm run build && openclaw plugins build --entry ./dist/index.js",
     "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke": "node --import tsx scripts/smoke-langgraph.ts"
   },
   "files": [
     "dist",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "openclaw": "latest",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
