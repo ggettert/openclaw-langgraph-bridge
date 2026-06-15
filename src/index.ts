@@ -428,34 +428,207 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
       handler: buildHandler(handlerDeps),
     });
 
-    // ---- 3. inbound_claim hook for HITL resume -----------------------------
-    // When a human replies in a thread / DM where a langgraph flow is
-    // currently waiting on an interrupt, intercept BEFORE the agent
-    // routes the message: POST a Command(resume=...) to LangGraph using
-    // the captured interrupt_id, clear the wait state, then let the
-    // message pass through to the agent so it can acknowledge.
-    //
-    // Note: the SDK's `registerHook` is typed for the InternalHookHandler
-    // shape (one-arg event), but the runtime actually calls inbound_claim
-    // with (event, ctx) per PluginHookHandlers. We cast through unknown
-    // to use the richer signature.
-    const inboundClaimHandler = async (
+    // ---- 3. langgraph_resume tool ------------------------------------------
+    // Resume an interrupted (waiting) flow with a payload. The agent
+    // calls this tool when the human's reply means "continue the
+    // workflow with this answer." Pivoted from a before_dispatch hook
+    // because the runtime does not dispatch before_dispatch / inbound_claim
+    // to this plugin for Slack DMs (confirmed empirically 2026-06-15:
+    // hook registers but ENTER never fires). The tool path is the
+    // documented, deterministic surface; we use that instead.
+    api.registerTool(
+      (toolContext) => {
+        const sessionKey = toolContext.sessionKey;
+        return {
+          name: "langgraph_resume",
+          label: "LangGraph Resume",
+          description:
+            "Resume a LangGraph workflow that is currently waiting at a HITL interrupt. Call this when the human's reply contains the answer that the workflow asked for (e.g., 'approve' for a merge_gate). With no flow_id, resumes the latest waiting flow in this session. The payload is whatever the workflow expects to satisfy the interrupt — a plain string works for most cases.",
+          parameters: Type.Object({
+            payload: Type.Unknown({
+              description: "Resume payload. Usually the human's reply as a string. Can also be a structured object if the workflow expects one.",
+            }),
+            flow_id: Type.Optional(
+              Type.String({
+                description: "Specific waiting flow to resume. Omit to resume the latest waiting flow in this session.",
+              }),
+            ),
+          }),
+          execute: async (_toolCallId: string, paramsUnknown: unknown) => {
+            const params = paramsUnknown as {
+              payload: unknown;
+              flow_id?: string;
+            };
+            if (!sessionKey) {
+              return jsonResult({
+                status: "error" as const,
+                reason: "missing_session_key",
+              });
+            }
+            try {
+              const flows = api.runtime.tasks.managedFlows.bindSession({
+                sessionKey,
+              });
+              const candidate = params.flow_id
+                ? (flows.get(params.flow_id) as unknown as {
+                    flowId?: string;
+                    status?: string;
+                    revision?: number;
+                    stateJson?: Record<string, unknown> | string | null;
+                    waitJson?: Record<string, unknown> | string | null;
+                  } | undefined)
+                : (flows.findLatest() as unknown as {
+                    flowId?: string;
+                    status?: string;
+                    revision?: number;
+                    stateJson?: Record<string, unknown> | string | null;
+                    waitJson?: Record<string, unknown> | string | null;
+                  } | undefined);
+              if (!candidate) {
+                return jsonResult({
+                  status: "error" as const,
+                  reason: "no_flow_found",
+                  message:
+                    "No matching flow found in this session. Did the workflow finish or fail?",
+                });
+              }
+              if (candidate.status !== "waiting") {
+                return jsonResult({
+                  status: "error" as const,
+                  reason: "flow_not_waiting",
+                  message: `Flow ${candidate.flowId} is currently ${candidate.status}, not waiting. Nothing to resume.`,
+                  flow_id: candidate.flowId,
+                  current_status: candidate.status,
+                });
+              }
+              const stateJson = parseMaybeJson(candidate.stateJson) ?? {};
+              const threadId = stateJson.langgraph_thread_id as string | undefined;
+              const workflow = stateJson.workflow as string | undefined;
+              const baseUrl =
+                (stateJson.langgraph_base_url as string | undefined) ??
+                config.langgraphBaseUrl;
+              if (!threadId || !workflow || !baseUrl) {
+                return jsonResult({
+                  status: "error" as const,
+                  reason: "flow_state_missing_handles",
+                  message:
+                    "Flow state is missing langgraph_thread_id / workflow / base_url; cannot resume.",
+                  flow_id: candidate.flowId,
+                });
+              }
+
+              const client = new LanggraphClient({
+                baseUrl,
+                timeoutMs: config.defaultTimeoutMs ?? 10_000,
+              });
+              const resumeResult = await client.resumeRun(
+                threadId,
+                workflow,
+                params.payload,
+                {
+                  metadata: {
+                    openclaw_flow_id: candidate.flowId,
+                    openclaw_session_key: sessionKey,
+                    openclaw_resume_source: "tool:langgraph_resume",
+                  },
+                },
+              );
+
+              // Transition flow waiting -> running. Re-read current revision.
+              const liveFlow = flows.get(candidate.flowId!) as
+                | { revision?: number }
+                | undefined;
+              const liveRevision = Number(
+                liveFlow?.revision ?? candidate.revision ?? 0,
+              );
+              flows.resume({
+                flowId: candidate.flowId!,
+                expectedRevision: liveRevision,
+                status: "running",
+                currentStep: "resumed",
+                stateJson: {
+                  ...stateJson,
+                  phase: "phase-3-resumed",
+                  resume_payload_preview:
+                    typeof params.payload === "string"
+                      ? params.payload.slice(0, 200)
+                      : JSON.stringify(params.payload).slice(0, 200),
+                  resumed_at: Date.now(),
+                  resume_run_id: resumeResult.runId,
+                },
+              });
+
+              logger?.info?.(
+                `langgraph_resume: resumed flow=${candidate.flowId} thread=${threadId} new_run=${resumeResult.runId}`,
+              );
+
+              return jsonResult({
+                status: "resumed" as const,
+                flow_id: candidate.flowId,
+                langgraph_thread_id: threadId,
+                resume_run_id: resumeResult.runId,
+                note:
+                  "Flow is back to running. Subsequent events will surface in this session as they fire.",
+              });
+            } catch (err: unknown) {
+              const m = err instanceof Error ? err.message : String(err);
+              logger?.error?.(`langgraph_resume failed: ${m}`);
+              return jsonResult({
+                status: "error" as const,
+                reason: "resume_failed",
+                message: m,
+              });
+            }
+          },
+        };
+      },
+      { name: "langgraph_resume" },
+    );
+
+    // ---- 4. (removed) before_dispatch / inbound_claim auto-resume hook -----
+    // Earlier iterations tried both before_dispatch and inbound_claim
+    // hooks to auto-resume on inbound. Empirically neither dispatches
+    // for this gateway's Slack DM path (logged in gateway.log: hook
+    // registers successfully, ENTER never fires on inbound). The
+    // langgraph_resume tool above is the documented, deterministic
+    // surface. Phase 4 may revisit if a different hook turns out to
+    // be the right one.
+    /* dead-code-after-pivot, kept only for reference
+    const beforeDispatchHandler = async (
       event: {
         content?: string;
         sessionKey?: string;
       },
       ctx: { sessionKey?: string },
     ): Promise<void> => {
+      // BRIGHT diagnostic so we can confirm the handler is even entered.
+      // Uses console.log directly (in addition to logger.info) so the
+      // signal reaches journalctl regardless of logger plumbing.
+      // eslint-disable-next-line no-console
+      console.log(
+        `[langgraph-bridge.before_dispatch] ENTER event.sessionKey=${event?.sessionKey ?? "(undef)"} ctx.sessionKey=${ctx?.sessionKey ?? "(undef)"} content_len=${(event?.content ?? "").length}`,
+      );
+      logger?.info?.(
+        `[langgraph-bridge.before_dispatch] ENTER event.sessionKey=${event?.sessionKey ?? "(undef)"} ctx.sessionKey=${ctx?.sessionKey ?? "(undef)"}`,
+      );
       const incomingSessionKey = event.sessionKey ?? ctx.sessionKey;
-      if (!incomingSessionKey) return;
+      if (!incomingSessionKey) {
+        // eslint-disable-next-line no-console
+        console.log(`[langgraph-bridge.before_dispatch] no sessionKey, bailing`);
+        return;
+      }
       const text = (event.content ?? "").trim();
-      if (!text) return;
+      if (!text) {
+        // eslint-disable-next-line no-console
+        console.log(`[langgraph-bridge.before_dispatch] empty content, bailing`);
+        return;
+      }
 
       try {
         const flows = api.runtime.tasks.managedFlows.bindSession({
           sessionKey: incomingSessionKey,
         });
-        const flow = flows.findLatest() as
+        const flow = flows.findLatest() as unknown as
           | undefined
           | {
               flowId: string;
@@ -464,10 +637,20 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               waitJson?: Record<string, unknown> | string | null;
               stateJson?: Record<string, unknown> | string | null;
             };
+        // eslint-disable-next-line no-console
+        console.log(
+          `[langgraph-bridge.before_dispatch] findLatest -> ${flow ? `flow=${flow.flowId} status=${flow.status}` : "(no flow)"}`,
+        );
         if (!flow || flow.status !== "waiting") return;
 
         const waitJson = parseMaybeJson(flow.waitJson);
-        if (!waitJson || waitJson.kind !== "langgraph_interrupt") return;
+        if (!waitJson || waitJson.kind !== "langgraph_interrupt") {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[langgraph-bridge.before_dispatch] flow=${flow.flowId} waitJson missing or wrong kind`,
+          );
+          return;
+        }
 
         const stateJson = parseMaybeJson(flow.stateJson) ?? {};
         const threadId = stateJson.langgraph_thread_id as string | undefined;
@@ -476,7 +659,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
           (stateJson.langgraph_base_url as string | undefined) ?? config.langgraphBaseUrl;
         if (!threadId || !workflow || !baseUrl) {
           logger?.warn?.(
-            `langgraph-bridge: inbound_claim found waiting flow=${flow.flowId} but missing thread/workflow/baseUrl; passing through`,
+            `langgraph-bridge: before_dispatch found waiting flow=${flow.flowId} but missing thread/workflow/baseUrl; passing through`,
           );
           return;
         }
@@ -518,29 +701,32 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         logger?.info?.(
           `langgraph-bridge: resumed flow=${flow.flowId} thread=${threadId} from inbound message`,
         );
+        // eslint-disable-next-line no-console
+        console.log(
+          `[langgraph-bridge.before_dispatch] RESUMED flow=${flow.flowId} thread=${threadId}`,
+        );
 
         // Don't claim the message — let the agent see it and acknowledge
         // ("resumed, watching the run"). The plugin did the side-effect; the
         // conversational ack is the agent's job.
       } catch (err: unknown) {
         const m = err instanceof Error ? err.message : String(err);
-        logger?.warn?.(`langgraph-bridge: inbound_claim resume failed: ${m}`);
+        logger?.warn?.(`langgraph-bridge: before_dispatch resume failed: ${m}`);
+        // eslint-disable-next-line no-console
+        console.log(`[langgraph-bridge.before_dispatch] ERROR ${m}`);
       }
     };
+    */
 
     // SAFETY: cast through unknown because registerHook's declared
     // InternalHookHandler signature is single-arg, but the runtime
     // dispatches inbound_claim with (event, ctx) per the typed hook
     // signature documented in PluginHookHandlers.
-    api.registerHook(
-      "inbound_claim",
-      inboundClaimHandler as unknown as Parameters<
-        typeof api.registerHook
-      >[1],
-    );
+    // (intentionally not registering before_dispatch / inbound_claim;
+    //  see comment block above explaining the pivot to langgraph_resume tool)
 
     logger?.info?.(
-      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + inbound_claim hook (token configured: ${Boolean(config.callbackToken)})`,
+      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_inspect + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
     );
   },
 });
