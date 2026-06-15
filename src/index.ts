@@ -1,7 +1,12 @@
 import { Type, type Static } from "typebox";
 import { definePluginEntry, jsonResult } from "openclaw/plugin-sdk/core";
 import { LanggraphClient, LanggraphHttpError } from "./langgraph-client.js";
-import { buildHandler, type WebhookHandlerDeps } from "./webhook-handler.js";
+import {
+  buildHandler,
+  processEvent,
+  type WebhookHandlerDeps,
+} from "./webhook-handler.js";
+import { subscribeToRunStream } from "./event-subscriber.js";
 
 /**
  * openclaw-langgraph-bridge — Phase 2
@@ -96,6 +101,37 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
   register(api) {
     const logger = api.logger;
     const config = (api.pluginConfig ?? {}) as PluginConfig;
+
+    // Build the shared WebhookHandlerDeps up front so both the tool
+    // factory (used by the SSE subscriber) and the HTTP route handler
+    // can reference the same object.
+    const handlerDeps: WebhookHandlerDeps = {
+      expectedToken: config.callbackToken,
+      pluginId: "openclaw-langgraph-bridge",
+      runtime: {
+        tasks: {
+          managedFlows: {
+            bindSession: (params) =>
+              api.runtime.tasks.managedFlows.bindSession({
+                sessionKey: params.sessionKey,
+              }) as unknown as ReturnType<
+                WebhookHandlerDeps["runtime"]["tasks"]["managedFlows"]["bindSession"]
+              >,
+          },
+        },
+        system: {
+          enqueueSystemEvent: api.runtime.system.enqueueSystemEvent,
+          requestHeartbeat: api.runtime.system.requestHeartbeat,
+        },
+      },
+      logger: logger
+        ? {
+            info: logger.info?.bind(logger),
+            warn: logger.warn?.bind(logger),
+            error: logger.error?.bind(logger),
+          }
+        : undefined,
+    };
 
     // ---- 1. Tool: langgraph_dispatch ---------------------------------------
     api.registerTool(
@@ -202,6 +238,50 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 currentStep: "running",
               });
 
+              // Phase 2 v2: spin up the SSE subscriber that translates
+              // LangGraph native events into our Mode B kinds and hands
+              // them to processEvent. Fire-and-forget; the subscriber
+              // closes itself when the stream ends.
+              subscribeToRunStream({
+                baseUrl,
+                threadId,
+                runId: run.runId,
+                flowId: flow.flowId,
+                handlers: {
+                  onEvent: (body) => {
+                    try {
+                      processEvent({
+                        body,
+                        sessionKey,
+                        // We re-read revision via lookup() inside
+                        // processEvent’s SDK calls; pass the latest
+                        // we know here. Stale revisions will be
+                        // refused by managedFlows and the SDK call
+                        // will return applied:false — acceptable for
+                        // phase-2 noise; phase-4 will tighten.
+                        flowRevision: flow.revision,
+                        deps: handlerDeps,
+                      });
+                    } catch (err: unknown) {
+                      const m = err instanceof Error ? err.message : String(err);
+                      logger?.warn?.(
+                        `langgraph-bridge: subscriber processEvent failed flow=${flow.flowId}: ${m}`,
+                      );
+                    }
+                  },
+                  onError: (err) => {
+                    logger?.warn?.(
+                      `langgraph-bridge: subscriber error flow=${flow.flowId}: ${err.message}`,
+                    );
+                  },
+                  onClose: (reason) => {
+                    logger?.info?.(
+                      `langgraph-bridge: subscriber closed flow=${flow.flowId} reason=${reason}`,
+                    );
+                  },
+                },
+              });
+
               logger?.info?.(
                 `langgraph_dispatch: dispatched flow=${flow.flowId} thread=${threadId} run=${run.runId} workflow=${params.workflow}`,
               );
@@ -240,34 +320,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     );
 
     // ---- 2. HTTP route: POST /plugins/openclaw-langgraph-bridge/events -----
-    const handlerDeps: WebhookHandlerDeps = {
-      expectedToken: config.callbackToken,
-      pluginId: "openclaw-langgraph-bridge",
-      runtime: {
-        tasks: {
-          managedFlows: {
-            bindSession: (params) =>
-              api.runtime.tasks.managedFlows.bindSession({
-                sessionKey: params.sessionKey,
-              }) as unknown as ReturnType<
-                WebhookHandlerDeps["runtime"]["tasks"]["managedFlows"]["bindSession"]
-              >,
-          },
-        },
-        system: {
-          enqueueSystemEvent: api.runtime.system.enqueueSystemEvent,
-          requestHeartbeat: api.runtime.system.requestHeartbeat,
-        },
-      },
-      logger: logger
-        ? {
-            info: logger.info?.bind(logger),
-            warn: logger.warn?.bind(logger),
-            error: logger.error?.bind(logger),
-          }
-        : undefined,
-    };
-
+    // (terminal-only callback receiver from LangGraph's native webhook
+    // field, plus a path for any future workflow-author direct POSTs)
     api.registerHttpRoute({
       path: WEBHOOK_PATH,
       auth: "plugin",
