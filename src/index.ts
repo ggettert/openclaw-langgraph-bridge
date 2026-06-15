@@ -521,10 +521,15 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 baseUrl,
                 timeoutMs: config.defaultTimeoutMs ?? 10_000,
               });
+              // Normalize common HITL string responses into the structured
+              // {decision, feedback} shape most workflows' gate parsers
+              // accept. Plain strings still pass through unchanged for
+              // workflows whose interrupts expect a raw string.
+              const normalizedPayload = normalizeResumePayload(params.payload);
               const resumeResult = await client.resumeRun(
                 threadId,
                 workflow,
-                params.payload,
+                normalizedPayload,
                 {
                   metadata: {
                     openclaw_flow_id: candidate.flowId,
@@ -550,9 +555,9 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   ...stateJson,
                   phase: "phase-3-resumed",
                   resume_payload_preview:
-                    typeof params.payload === "string"
-                      ? params.payload.slice(0, 200)
-                      : JSON.stringify(params.payload).slice(0, 200),
+                    typeof normalizedPayload === "string"
+                      ? normalizedPayload.slice(0, 200)
+                      : JSON.stringify(normalizedPayload).slice(0, 200),
                   resumed_at: Date.now(),
                   resume_run_id: resumeResult.runId,
                 },
@@ -730,6 +735,53 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     );
   },
 });
+
+/**
+ * Normalize a resume payload so common HITL replies route cleanly through
+ * gate parsers that expect a structured response. Accepts:
+ *   - bare "approve" / "block_revise" / "block_abort" / "extend" / "abort"
+ *     -> {decision: <normalized>, feedback: ""}
+ *   - "block_revise: <feedback>" or "block: <feedback>"
+ *     -> {decision: "block_revise", feedback: "<feedback>"}
+ *   - anything else (other strings, objects, numbers): pass through
+ *     unchanged so workflows whose interrupts expect raw payloads still work
+ *
+ * Aliases match the typical merge_gate / design_gate parser shape used in
+ * langgraph workflows (see ggettert/aidlc-fleet-poc graph/workflow.py).
+ */
+export function normalizeResumePayload(payload: unknown): unknown {
+  if (typeof payload !== "string") return payload;
+  const trimmed = payload.trim();
+  if (!trimmed) return payload;
+
+  // Split "<decision>: <feedback>" if present
+  const colonIdx = trimmed.indexOf(":");
+  let decisionRaw: string;
+  let feedback = "";
+  if (colonIdx !== -1) {
+    decisionRaw = trimmed.slice(0, colonIdx).trim();
+    feedback = trimmed.slice(colonIdx + 1).trim();
+  } else {
+    decisionRaw = trimmed;
+  }
+  const lower = decisionRaw.toLowerCase();
+
+  const APPROVE = new Set(["approve", "approved", "yes", "ok", "lgtm"]);
+  const BLOCK_REVISE = new Set(["block", "block_revise", "revise", "no"]);
+  const BLOCK_ABORT = new Set(["block_abort", "abort", "stop", "end", "cancel"]);
+  const EXTEND = new Set(["extend", "extend_cap", "continue"]);
+
+  let decision: string | null = null;
+  if (APPROVE.has(lower)) decision = "approve";
+  else if (BLOCK_REVISE.has(lower)) decision = "block_revise";
+  else if (BLOCK_ABORT.has(lower)) decision = "block_abort";
+  else if (EXTEND.has(lower)) decision = "extend";
+
+  // Not a recognized HITL keyword -> pass raw string through
+  if (decision === null) return payload;
+
+  return { decision, feedback };
+}
 
 function parseMaybeJson(
   raw: Record<string, unknown> | string | null | undefined,
