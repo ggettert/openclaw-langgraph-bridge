@@ -22,7 +22,8 @@ import { formatInspect } from "./inspect-formatter.js";
  *   {kind, flow_id, seq, title, summary, data} events to that route; the
  *   handler authenticates, classifies (status / milestone / decision /
  *   terminal / hitl), updates flow state, and conditionally wakes the
- *   originating session via enqueueSystemEvent + requestHeartbeat.
+ *   originating session via the `openclaw agent` CLI wake primitive
+ *   (Phase 4 — see ./wake-agent and ./webhook-handler).
  *
  *   Wire surface kept tight on purpose. Auth = Bearer token comparison
  *   against the configured callbackToken. Body limit 64 KB. Schema
@@ -44,6 +45,13 @@ const ConfigSchema = Type.Object({
     Type.String({
       description:
         "Shared secret expected as `Authorization: Bearer <token>` on inbound webhook POSTs. The webhook route refuses requests when unset.",
+    }),
+  ),
+  agentId: Type.Optional(
+    Type.String({
+      description:
+        "Agent id to wake via `openclaw agent` when a LangGraph event requires waking the session-bound agent. Default 'main'. Plumbed through to wake-agent.ts.",
+      examples: ["main"],
     }),
   ),
   callbackPublicBaseUrl: Type.Optional(
@@ -110,6 +118,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     const handlerDeps: WebhookHandlerDeps = {
       expectedToken: config.callbackToken,
       pluginId: "openclaw-langgraph-bridge",
+      agentId: config.agentId ?? "main",
       runtime: {
         tasks: {
           managedFlows: {
@@ -120,10 +129,6 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 WebhookHandlerDeps["runtime"]["tasks"]["managedFlows"]["bindSession"]
               >,
           },
-        },
-        system: {
-          enqueueSystemEvent: api.runtime.system.enqueueSystemEvent,
-          requestHeartbeat: api.runtime.system.requestHeartbeat,
         },
       },
       logger: logger
@@ -517,27 +522,109 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 });
               }
 
-              const client = new LanggraphClient({
-                baseUrl,
-                timeoutMs: config.defaultTimeoutMs ?? 10_000,
-              });
               // Normalize common HITL string responses into the structured
               // {decision, feedback} shape most workflows' gate parsers
               // accept. Plain strings still pass through unchanged for
               // workflows whose interrupts expect a raw string.
               const normalizedPayload = normalizeResumePayload(params.payload);
-              const resumeResult = await client.resumeRun(
-                threadId,
-                workflow,
-                normalizedPayload,
-                {
+
+              // Phase 5 (2026-06-16): resume via streaming endpoint, not
+              // fire-and-forget. Previously called client.resumeRun which
+              // POSTed /threads/{tid}/runs and returned the run_id. That
+              // worked, but no SSE subscriber was opened on the new run,
+              // so any milestone / hitl / terminal events emitted by the
+              // resumed graph never reached our processEvent pipeline and
+              // never woke the agent. Symptom: BINGO-9 resume merged on
+              // LangGraph but Kit was never woken about the terminal.
+              //
+              // Fix: route resume through dispatchAndStream with `command`
+              // instead of `input`. Identical subscriber lifecycle to
+              // initial dispatch — same processEvent, same wakeAgent.
+              const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+              const flowRevisionForSubscriber = Number(candidate.revision ?? 0);
+              const onEvent = (body: IncomingEventBody) => {
+                try {
+                  processEvent({
+                    body,
+                    sessionKey,
+                    flowRevision: flowRevisionForSubscriber,
+                    deps: handlerDeps,
+                  });
+                } catch (err: unknown) {
+                  const m = err instanceof Error ? err.message : String(err);
+                  logger?.warn?.(
+                    `langgraph-bridge: resume subscriber processEvent failed flow=${candidate.flowId}: ${m}`,
+                  );
+                }
+              };
+              const runIdPromise = new Promise<string>((resolve, reject) => {
+                const timer = setTimeout(
+                  () => reject(new Error("timed out waiting for resume run_id metadata frame")),
+                  timeoutMs,
+                );
+                let resolved = false;
+                dispatchAndStream({
+                  baseUrl,
+                  threadId,
+                  flowId: candidate.flowId!,
+                  assistantId: workflow,
+                  command: { resume: normalizedPayload },
                   metadata: {
                     openclaw_flow_id: candidate.flowId,
                     openclaw_session_key: sessionKey,
                     openclaw_resume_source: "tool:langgraph_resume",
                   },
-                },
-              );
+                  handlers: {
+                    onRunId: (runId) => {
+                      if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timer);
+                        resolve(runId);
+                      }
+                    },
+                    onEvent,
+                    onError: (err) => {
+                      logger?.warn?.(
+                        `langgraph-bridge: resume stream error flow=${candidate.flowId}: ${err.message}`,
+                      );
+                      if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timer);
+                        reject(err);
+                      }
+                    },
+                    onClose: (sawTerminal) => {
+                      logger?.info?.(
+                        `langgraph-bridge: resume stream closed flow=${candidate.flowId} sawTerminal=${sawTerminal}`,
+                      );
+                      // Same synthetic-terminal fallback as initial dispatch:
+                      // if the resumed run ended without a terminal-kind
+                      // event, fabricate one so the agent learns the run
+                      // finished. Real terminal and hitl events suppress
+                      // this branch.
+                      if (!sawTerminal) {
+                        try {
+                          processEvent({
+                            body: {
+                              kind: "terminal",
+                              flow_id: candidate.flowId!,
+                              title: "graph:end",
+                              summary: "workflow completed (no error)",
+                            },
+                            sessionKey,
+                            flowRevision: flowRevisionForSubscriber,
+                            deps: handlerDeps,
+                          });
+                        } catch {
+                          // Best-effort — if processEvent throws, fall
+                          // through; we already logged the close.
+                        }
+                      }
+                    },
+                  },
+                });
+              });
+              const resumeRunId = await runIdPromise;
 
               // Transition flow waiting -> running. Re-read current revision.
               const liveFlow = flows.get(candidate.flowId!) as
@@ -553,27 +640,27 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 currentStep: "resumed",
                 stateJson: {
                   ...stateJson,
-                  phase: "phase-3-resumed",
+                  phase: "phase-5-resumed-stream",
                   resume_payload_preview:
                     typeof normalizedPayload === "string"
                       ? normalizedPayload.slice(0, 200)
                       : JSON.stringify(normalizedPayload).slice(0, 200),
                   resumed_at: Date.now(),
-                  resume_run_id: resumeResult.runId,
+                  resume_run_id: resumeRunId,
                 },
               });
 
               logger?.info?.(
-                `langgraph_resume: resumed flow=${candidate.flowId} thread=${threadId} new_run=${resumeResult.runId}`,
+                `langgraph_resume: resumed flow=${candidate.flowId} thread=${threadId} new_run=${resumeRunId} (streaming)`,
               );
 
               return jsonResult({
                 status: "resumed" as const,
                 flow_id: candidate.flowId,
                 langgraph_thread_id: threadId,
-                resume_run_id: resumeResult.runId,
+                resume_run_id: resumeRunId,
                 note:
-                  "Flow is back to running. Subsequent events will surface in this session as they fire.",
+                  "Flow is back to running and SSE subscriber is attached. Subsequent events will surface in this session as they fire.",
               });
             } catch (err: unknown) {
               const m = err instanceof Error ? err.message : String(err);
