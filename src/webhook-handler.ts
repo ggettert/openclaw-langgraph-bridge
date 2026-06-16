@@ -1,9 +1,22 @@
 /**
- * Phase 2 — Webhook handler.
+ * Phase 2/4 — Webhook handler.
  *
  * Receives event POSTs from a LangGraph workflow and routes them into the
- * originating OpenClaw session via managedFlows + (optionally)
- * enqueueSystemEvent + requestHeartbeat.
+ * originating OpenClaw session via managedFlows + (Phase 4) the
+ * `openclaw agent` CLI wake primitive.
+ *
+ * Phase 4 changes (2026-06-16):
+ *   - Dropped `enqueueSystemEvent` and `requestHeartbeat` from the wake
+ *     path. `requestHeartbeat` does not fire for Slack-DM Anthropic-
+ *     provider sessions; the system-event queue alone never woke the
+ *     agent without an external wake. Empirically confirmed via
+ *     gateway.log (zero `[heartbeat]` dispatches) in late-night dig
+ *     2026-06-15 — see palace `decisions/proactive-wake-primitive`.
+ *   - Replaced with `wakeAgent()` from ./wake-agent, which shells out
+ *     to `openclaw agent --agent <id> --session-key <key> --message`,
+ *     same primitive fleetmind validated in src/cli/commands/nats.ts.
+ *   - Agent id is plumbed via `deps.agentId` (sourced from
+ *     plugin-config `agentId`, default "main").
  *
  * Wire shape: the workflow posts JSON like
  *
@@ -24,11 +37,11 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-  actionHeartbeatReason,
   actionRequiresWake,
   classifyEvent,
   type LanggraphEventKind,
 } from "./event-classifier.js";
+import { wakeAgent } from "./wake-agent.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -44,6 +57,11 @@ export type WebhookHandlerDeps = {
   expectedToken: string | undefined;
   /** Plugin id, used for managedFlows.bindSession requesterOrigin. */
   pluginId: string;
+  /**
+   * Agent id to wake when an event requires waking. Sourced from
+   * plugin config `agentId` (default "main").
+   */
+  agentId: string;
   /** Runtime surface from api.runtime. */
   runtime: {
     tasks: {
@@ -56,23 +74,12 @@ export type WebhookHandlerDeps = {
         };
       };
     };
-    system: {
-      enqueueSystemEvent: (
-        text: string,
-        opts: {
-          sessionKey: string;
-          contextKey?: string | null;
-        },
-      ) => boolean;
-      requestHeartbeat: (opts: {
-        source: "hook" | "other" | "background-task";
-        intent: "event" | "scheduled" | "immediate" | "manual";
-        reason?: string;
-        sessionKey?: string;
-        coalesceMs?: number;
-      }) => void;
-    };
   };
+  /**
+   * Override the wake function. Defaults to the real `wakeAgent`. Used
+   * in tests to assert the call without actually shelling out.
+   */
+  wake?: typeof wakeAgent;
   logger?: {
     info?: (msg: string) => void;
     warn?: (msg: string) => void;
@@ -172,31 +179,23 @@ export function processEvent(params: {
       break;
   }
 
-  // 2. Emit a system event into the session queue. Always — even for
-  //    status events. Status events get a shared contextKey so the queue
-  //    dedups runs of the same event-kind without growing unbounded; the
-  //    agent will see the most recent status entry whenever it next wakes
-  //    for some other reason.
-  const eventText = formatEventText(kind, title, summary);
-  const contextKey =
-    classification.contextKeyHint === "noise"
-      ? `langgraph:${body.flow_id}:status`
-      : null;
-  deps.runtime.system.enqueueSystemEvent(eventText, {
-    sessionKey,
-    contextKey,
-  });
-
-  // 3. Decide whether to wake the agent.
+  // 2. Decide whether to wake the agent. Phase 4: wake via the
+  //    `openclaw agent` CLI primitive (the only thing confirmed to wake
+  //    a Slack-DM Anthropic session). Status events still pass through
+  //    flow state but emit no wake and no system event — they're
+  //    intentionally silent. The agent will see the latest flow state
+  //    whenever it next turns for any other reason.
   if (actionRequiresWake(classification.action)) {
-    deps.runtime.system.requestHeartbeat({
-      source: "hook" as const,
-      intent: "event" as const,
-      reason: actionHeartbeatReason(classification.action),
-      sessionKey,
-      // Light coalesce so a burst of milestones doesn't fire N turns.
-      coalesceMs: 500,
-    });
+    const wake = deps.wake ?? wakeAgent;
+    const wakeMessage = formatEventText(kind, title, summary);
+    wake(
+      {
+        agentId: deps.agentId,
+        sessionKey,
+        message: wakeMessage,
+      },
+      { logger: deps.logger },
+    );
   }
 
   deps.logger?.info?.(

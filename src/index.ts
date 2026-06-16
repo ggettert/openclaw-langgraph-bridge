@@ -22,7 +22,8 @@ import { formatInspect } from "./inspect-formatter.js";
  *   {kind, flow_id, seq, title, summary, data} events to that route; the
  *   handler authenticates, classifies (status / milestone / decision /
  *   terminal / hitl), updates flow state, and conditionally wakes the
- *   originating session via enqueueSystemEvent + requestHeartbeat.
+ *   originating session via the `openclaw agent` CLI wake primitive
+ *   (Phase 4 — see ./wake-agent and ./webhook-handler).
  *
  *   Wire surface kept tight on purpose. Auth = Bearer token comparison
  *   against the configured callbackToken. Body limit 64 KB. Schema
@@ -44,6 +45,13 @@ const ConfigSchema = Type.Object({
     Type.String({
       description:
         "Shared secret expected as `Authorization: Bearer <token>` on inbound webhook POSTs. The webhook route refuses requests when unset.",
+    }),
+  ),
+  agentId: Type.Optional(
+    Type.String({
+      description:
+        "Agent id to wake via `openclaw agent` when a LangGraph event requires waking the session-bound agent. Default 'main'. Plumbed through to wake-agent.ts.",
+      examples: ["main"],
     }),
   ),
   callbackPublicBaseUrl: Type.Optional(
@@ -110,6 +118,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     const handlerDeps: WebhookHandlerDeps = {
       expectedToken: config.callbackToken,
       pluginId: "openclaw-langgraph-bridge",
+      agentId: config.agentId ?? "main",
       runtime: {
         tasks: {
           managedFlows: {
@@ -120,10 +129,6 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 WebhookHandlerDeps["runtime"]["tasks"]["managedFlows"]["bindSession"]
               >,
           },
-        },
-        system: {
-          enqueueSystemEvent: api.runtime.system.enqueueSystemEvent,
-          requestHeartbeat: api.runtime.system.requestHeartbeat,
         },
       },
       logger: logger
