@@ -88,7 +88,11 @@ The `spec_path` MUST exist in the repo before dispatch. The workflow's `/build` 
 **Worked example — dispatching the `fleet` workflow**
 
 ```python
-# Step 1: ensure the spec file exists and is committed to main (or the target branch)
+# Step 1: ensure the spec file exists, is committed, and is PUSHED to the remote repo
+#         (a local commit is not enough — the workflow reads it from the remote).
+#         A pushed feature branch is sufficient — the spec does NOT need to be on
+#         `main` and does NOT need a merged PR. fleet resolves spec_path from the
+#         repo directly. (Verified BINGO-13: spec read fine off the feature branch.)
 # Step 2: dispatch
 result = langgraph_dispatch(
     workflow="fleet",
@@ -220,7 +224,9 @@ langgraph_resume(
 
 **Fix:**
 1. Create the spec file (e.g. `feature/BINGO-11/tech-spec.md`) in the repo.
-2. Commit and push to `main` (or whichever branch the workflow targets).
+2. Commit and **push** it. A pushed feature branch is enough — the spec does NOT
+   need to be merged to `main` and does NOT require a PR. (Don't burn a merge
+   gate just to land the spec; fleet reads `spec_path` straight from the repo.)
 3. Dispatch again with `spec_path` set to the exact file path, not a description.
 
 ### Stale plugin flow status after gateway restart
@@ -238,6 +244,31 @@ langgraph_resume(
 **Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake. BINGO-9 was the dogfood run that caught this — the merge landed on LangGraph but Kit never learned the terminal had fired.
 
 **Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch. If you are seeing this on a patched version, check that the gateway is actually running the updated plugin binary (`grep -c "resume_run_id" dist/index.js`).
+
+### Post-resume frame replay / out-of-order events (BINGO-13)
+
+**Symptom:** after a successful `langgraph_resume` (e.g. approving a `merge_gate`),
+the session is woken by a flurry of trailing frames that arrive *out of order* and
+*after* the work has actually completed: a **second `merge_gate` HITL interrupt**,
+followed by `merge:started` / `merge:finished` / `node:merge` recap milestones —
+some landing *after* the `graph:end` terminal frame.
+
+**Root cause:** the resumed run opens a fresh SSE subscriber (Phase 5, v0.10.0+),
+and the post-resume event stream can replay/buffer node frames rather than deliver
+them in strict causal order. The duplicate `merge_gate` frame is stale — the gate
+was already satisfied by the resume — but a consumer that reacts to frame *kind*
+alone could **double-fire `langgraph_resume`** into an already-completed flow.
+
+**Fix / guard:**
+1. **`langgraph_inspect` before you `langgraph_resume`.** Treat `langgraph_inspect`
+   as ground truth, not the raw frame. If it shows `status: "succeeded"` /
+   `graph:end`, a trailing `merge_gate` HITL frame is stale — do **not** call
+   `langgraph_resume` again.
+2. The `langgraph_resume` guard helps (it errors unless the flow is `waiting`),
+   but don't rely on it alone — confirm state with `langgraph_inspect` first.
+3. Trailing recap milestones (`merge:*`, `node:merge`) after terminal are
+   informational replay; verify the real outcome out-of-band (e.g. `gh pr view`)
+   and don't re-post duplicates.
 
 ### LangGraph POC unreachable
 
