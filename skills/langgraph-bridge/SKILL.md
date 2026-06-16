@@ -261,9 +261,10 @@ alone could **double-fire `langgraph_resume`** into an already-completed flow.
 
 **Fix / guard:**
 1. **`langgraph_inspect` before you `langgraph_resume`.** Treat `langgraph_inspect`
-   as ground truth, not the raw frame. If it shows `status: "succeeded"` /
-   `graph:end`, a trailing `merge_gate` HITL frame is stale — do **not** call
-   `langgraph_resume` again.
+   as ground truth, not the raw frame. Treat ANY of these as terminal: `status:
+   "succeeded"`, `"failed"`, `"completed"`, or a `graph:end` summary in flow
+   state. If terminal, a trailing `merge_gate` HITL frame is stale — do **not**
+   call `langgraph_resume` again.
 2. The `langgraph_resume` guard helps (it errors unless the flow is `waiting`),
    but don't rely on it alone — confirm state with `langgraph_inspect` first.
 3. Trailing recap milestones (`merge:*`, `node:merge`) after terminal are
