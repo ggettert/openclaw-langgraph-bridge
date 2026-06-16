@@ -238,7 +238,7 @@ describe("processEvent — agentId plumbed from deps", () => {
 });
 
 describe("processEvent — terminated-flow guard (#10, #16)", () => {
-  function makeTerminatedDeps(terminalStatus: string) {
+  function makeDepsWithFlowStatus(flowStatus: string) {
     const calls = {
       runTask: vi.fn<(...args: AnyArgs) => unknown>(),
       setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
@@ -247,7 +247,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
         () => ({
           owner_key: "agent:main:dm:user",
           revision: 5,
-          status: terminalStatus,
+          status: flowStatus,
         }),
       ),
       wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
@@ -274,7 +274,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   }
 
   it("ignores stale `hitl` after `succeeded` — no setWaiting, no wake (#16)", () => {
-    const { deps, calls } = makeTerminatedDeps("succeeded");
+    const { deps, calls } = makeDepsWithFlowStatus("succeeded");
     const result = processEvent({
       body: {
         kind: "hitl",
@@ -296,7 +296,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   });
 
   it("ignores stale `terminal` after `succeeded` — no finish, no wake, no 500 (#10)", () => {
-    const { deps, calls } = makeTerminatedDeps("succeeded");
+    const { deps, calls } = makeDepsWithFlowStatus("succeeded");
     const result = processEvent({
       body: {
         kind: "terminal",
@@ -317,7 +317,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   });
 
   it("ignores stale `milestone` after `cancelled`", () => {
-    const { deps, calls } = makeTerminatedDeps("cancelled");
+    const { deps, calls } = makeDepsWithFlowStatus("cancelled");
     processEvent({
       body: {
         kind: "milestone",
@@ -334,7 +334,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   });
 
   it("treats `failed` as terminal", () => {
-    const { deps, calls } = makeTerminatedDeps("failed");
+    const { deps, calls } = makeDepsWithFlowStatus("failed");
     processEvent({
       body: { kind: "hitl", flow_id: "f1", title: "x" },
       sessionKey: "agent:main:dm:user",
@@ -345,7 +345,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   });
 
   it("treats `lost` as terminal", () => {
-    const { deps, calls } = makeTerminatedDeps("lost");
+    const { deps, calls } = makeDepsWithFlowStatus("lost");
     processEvent({
       body: { kind: "terminal", flow_id: "f1", title: "x" },
       sessionKey: "agent:main:dm:user",
@@ -356,7 +356,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   });
 
   it("does NOT treat `blocked` as terminal — still processes (blocked can recover)", () => {
-    const { deps, calls } = makeTerminatedDeps("blocked");
+    const { deps, calls } = makeDepsWithFlowStatus("blocked");
     processEvent({
       body: { kind: "hitl", flow_id: "f1", title: "real-interrupt" },
       sessionKey: "agent:main:dm:user",
@@ -367,7 +367,7 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   });
 
   it("non-terminal status (`running`, `waiting`) is NOT guarded — processes normally", () => {
-    const { deps: depsRunning, calls: callsRunning } = makeTerminatedDeps("running");
+    const { deps: depsRunning, calls: callsRunning } = makeDepsWithFlowStatus("running");
     processEvent({
       body: { kind: "hitl", flow_id: "f1", title: "real-interrupt" },
       sessionKey: "agent:main:dm:user",
