@@ -187,7 +187,7 @@ export function processEvent(params: {
   //    whenever it next turns for any other reason.
   if (actionRequiresWake(classification.action)) {
     const wake = deps.wake ?? wakeAgent;
-    const wakeMessage = formatEventText(kind, title, summary);
+    const wakeMessage = formatEventText(kind, title, summary, sessionKey);
     wake(
       {
         agentId: deps.agentId,
@@ -205,14 +205,49 @@ export function processEvent(params: {
   return { status: "ok", action: classification.action };
 }
 
-function formatEventText(
+/**
+ * Build the system-event text delivered to the agent when a wake fires.
+ *
+ * Includes a thread/chat hint extracted from `sessionKey` (if present) so
+ * the agent knows where to reply. Without this, woken agents default to
+ * the session's root channel rather than the originating thread — the
+ * `openclaw agent` CLI has no `--thread-id` flag and the runtime doesn't
+ * synthesize chat context from the session key on its own.
+ *
+ * SessionKey shapes we recognize:
+ *   agent:<id>:slack:channel:<chlower>:thread:<ts>     → Slack threaded
+ *   agent:<id>:slack:dm:<user>                         → Slack DM (no hint)
+ *   agent:<id>:<other>:…                                → unrecognized, no hint
+ */
+export function formatEventText(
   kind: LanggraphEventKind,
   title: string,
   summary: string,
+  sessionKey?: string,
 ): string {
   const head = `[langgraph:${kind}] ${title}`;
-  if (!summary) return head;
-  return `${head}\n${summary}`;
+  const hint = sessionKey ? buildReplyHint(sessionKey) : "";
+  const lines: string[] = [];
+  if (hint) lines.push(hint);
+  lines.push(head);
+  if (summary) lines.push(summary);
+  return lines.join("\n");
+}
+
+/**
+ * Extract a human-readable reply hint from a session key. Returns an empty
+ * string when no hint is appropriate (e.g. plain DMs).
+ */
+export function buildReplyHint(sessionKey: string): string {
+  // Slack threaded channel session: agent:<id>:slack:channel:<ch>:thread:<ts>
+  const slackThread = sessionKey.match(
+    /:slack:channel:([^:]+):thread:([^:]+)/i,
+  );
+  if (slackThread) {
+    const [, channel, ts] = slackThread;
+    return `[reply-hint] This wake was bound to a Slack thread. Reply IN-THREAD by passing threadId="${ts}" on your next message tool call (channel=${channel}). Default outbound otherwise lands at channel root.`;
+  }
+  return "";
 }
 
 /**
