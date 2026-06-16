@@ -1,0 +1,327 @@
+---
+name: langgraph-bridge
+description: "Drive LangGraph workflows from an agent turn using langgraph_dispatch / langgraph_inspect / langgraph_resume. Agent yields after dispatch and is woken on milestones, HITL gates, and terminal events."
+argument-hint: "workflow id or graph id, plus structured input matching the target workflow's state schema"
+---
+
+# langgraph-bridge
+
+Use this skill whenever you need to dispatch a durable LangGraph workflow from inside an agent turn and receive proactive wake-backs when that workflow emits events (milestones, HITL interrupts, terminal).
+
+Plugin: `openclaw-langgraph-bridge` v0.11.0+  
+Repo: github.com/ggettert/openclaw-langgraph-bridge  
+Three tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`
+
+---
+
+## When to use
+
+- Driving a multi-step, durable LangGraph workflow (e.g. the `fleet` coding-agent workflow) that runs for minutes or hours and will pause at HITL gates.
+- When the agent needs to be woken in the originating Slack thread or DM when the workflow posts a milestone, decision, or terminal event.
+- When the human's approval ("approve", "block_revise: …") needs to be forwarded back into a running workflow at an interrupt point.
+
+## When NOT to use
+
+- **Synchronous one-shot calls** that return in < 1 s — just call the downstream API directly.
+- **Local-only logic** that doesn't need durable execution state in LangGraph.
+- **Anything that doesn't need proactive wake-back** — if you don't need to be told when it's done, don't wrap it.
+- **Writing or modifying the workflow graph itself** — this skill is for consumers of workflows, not authors.
+
+---
+
+## Canonical lifecycle
+
+```
+1. dispatch      agent calls langgraph_dispatch → plugin creates managed TaskFlow,
+                 opens SSE stream to LangGraph, returns {flow_id, thread_id, run_id}
+                 in < 10 s (default timeout).
+
+2. yield         agent calls sessions_yield → turn ends. Plugin streams events in
+                 the background.
+
+3. milestone     LangGraph emits a milestone frame (node update). Plugin wakes the
+     wake         agent in the originating session with event details.
+
+4. hitl          LangGraph hits an __interrupt__. Plugin classifies as "hitl",
+     wake         sets flow.status = "waiting", wakes agent with the interrupt prompt.
+
+5. human         Human replies in the thread/DM. Agent calls langgraph_resume with
+   replies        the human's answer. Plugin opens a NEW SSE stream on the resumed run
+                 (Phase 5, v0.10.0+) — post-resume milestone/terminal events surface.
+
+6. terminal      Workflow ends. Plugin wakes agent with terminal summary in-thread.
+     wake
+```
+
+**The agent does NOT poll.** After dispatch, yield and wait to be woken. Polling with `langgraph_inspect` inside a tight loop is never needed and wastes turn budget.
+
+---
+
+## Tool reference
+
+### `langgraph_dispatch`
+
+Dispatch a new workflow run. Returns synchronously once LangGraph has accepted the run and returned a run_id (first SSE metadata frame). Event callbacks proceed asynchronously on the SSE stream.
+
+**Parameters**
+
+| param | type | required | notes |
+|---|---|---|---|
+| `workflow` | string | ✓ | LangGraph assistant UUID or graph id (e.g. `"fleet"`) |
+| `input` | object | ✓ (for fleet) | Must match the workflow's state schema exactly — see warning below |
+| `decision_only` | boolean | — | Default `true`. When true, only milestone/decision/terminal/hitl events wake the agent; status events update flow state silently |
+
+> **⚠ Schema enforcement.** LangGraph silently drops unknown keys in `input`. If your input has the wrong shape, downstream workflow nodes will raise `KeyError` when they try to read a field they expect. You will NOT get a clear error back from dispatch — you'll get a mid-run failure event. Always use the exact schema for your workflow (GET `<langgraph_base_url>/assistants/<assistant_id>/schemas` to inspect).
+
+**`fleet` workflow — required input keys**
+
+```
+ticket_id   string   e.g. "BINGO-9"
+repo        string   e.g. "ggettert/aidlc-sandbox"
+spec_path   string   path to an existing spec file ALREADY committed to the repo
+                     e.g. "feature/BINGO-9/tech-spec.md"
+                     ← NOT free-text; NOT a ticket title; NOT a description
+```
+
+The `spec_path` MUST exist in the repo before dispatch. The workflow's `/build` step will fail with a `RuntimeError` at runtime if the file is missing or if `spec_path` contains anything other than an actual path.
+
+**Worked example — dispatching the `fleet` workflow**
+
+```python
+# Step 1: ensure the spec file exists and is committed to main (or the target branch)
+# Step 2: dispatch
+result = langgraph_dispatch(
+    workflow="fleet",
+    input={
+        "ticket_id": "BINGO-11",
+        "repo": "ggettert/aidlc-sandbox",
+        "spec_path": "feature/BINGO-11/tech-spec.md"
+    }
+)
+# result = {
+#   "status": "accepted",
+#   "flow_id": "flow_abc123",
+#   "langgraph_thread_id": "tid_...",
+#   "langgraph_run_id": "run_...",
+#   "workflow": "fleet",
+#   "session_key": "agent:main:slack:channel:c01...:thread:1781..."
+# }
+
+# Step 3: yield. You will be woken when events fire.
+sessions_yield(message="Dispatched fleet run. Will report back on events.")
+```
+
+**What breaks if spec_path is wrong:**
+
+```python
+# ❌ WRONG — free-text gets silently dropped; downstream node KeyErrors
+langgraph_dispatch(
+    workflow="fleet",
+    input={
+        "ticket_id": "BINGO-9",
+        "ticket_title": "Fix the login bug",    # ← dropped silently
+        "ticket_description": "Users can't log in",  # ← dropped silently
+        "repo": "ggettert/aidlc-sandbox"
+        # spec_path missing entirely
+    }
+)
+# Result: dispatch succeeds, workflow starts, coder node crashes with
+# KeyError: 'spec_path' mid-run.
+```
+
+---
+
+### `langgraph_inspect`
+
+Read the current state of a flow this session owns. Returns status, step, and flow metadata from the plugin's managed TaskFlow record.
+
+**Parameters**
+
+| param | type | notes |
+|---|---|---|
+| `flow_id` | string (optional) | Specific flow to inspect. Omit to inspect the latest flow in this session |
+
+**Use after a wake** to confirm the flow's current status before acting:
+
+```python
+state = langgraph_inspect()
+# state.inspect contains:
+#   flow_id, status (queued/running/waiting/completed/failed),
+#   currentStep, workflow, langgraph_thread_id, langgraph_run_id, ...
+```
+
+**Known issue — stale status after gateway restart**
+
+The plugin's managed TaskFlow records live in gateway process memory. If the gateway restarts mid-run, `langgraph_inspect` may report the old status (e.g. `"running"`) while LangGraph is actually in a different state (e.g. `"interrupted"` or `"success"`). This was observed in practice: plugin said `"running"`, LangGraph said the thread was at a HITL interrupt with no active run.
+
+When the plugin's status looks wrong, use the direct LangGraph API to check the thread's true state (see [Escape hatch](#direct-langgraph-api-escape-hatch) below).
+
+---
+
+### `langgraph_resume`
+
+Resume a workflow that is paused at a HITL interrupt. Internally opens a fresh SSE subscriber on the resumed run so all post-resume events (milestones, further HITL gates, terminal) continue to surface in this session (Phase 5, v0.10.0+).
+
+**Parameters**
+
+| param | type | notes |
+|---|---|---|
+| `payload` | any | The human's reply. A plain string is usually correct. See normalization rules below |
+| `flow_id` | string (optional) | Specific flow to resume. Omit to resume the latest waiting flow in this session |
+
+**Payload normalization** — the plugin normalizes common HITL string replies into the structured shape `{decision, feedback}` that most `fleet` gate parsers expect:
+
+| raw string | normalized |
+|---|---|
+| `"approve"`, `"yes"`, `"ok"`, `"lgtm"`, `"approved"` | `{decision: "approve", feedback: ""}` |
+| `"block"`, `"block_revise"`, `"revise"`, `"no"` | `{decision: "block_revise", feedback: ""}` |
+| `"block_revise: <text>"` or `"block: <text>"` | `{decision: "block_revise", feedback: "<text>"}` |
+| `"abort"`, `"stop"`, `"cancel"`, `"block_abort"` | `{decision: "block_abort", feedback: ""}` |
+| `"extend"`, `"extend_cap"`, `"continue"` | `{decision: "extend", feedback: ""}` |
+| anything else / object | passed through unchanged |
+
+**Worked example — resuming a merge_gate interrupt**
+
+```python
+# After being woken with a HITL event (merge_gate asking for approve/block):
+result = langgraph_resume(payload="approve")
+# result = {
+#   "status": "resumed",
+#   "flow_id": "flow_abc123",
+#   "langgraph_thread_id": "tid_...",
+#   "resume_run_id": "run_xyz...",
+#   "note": "Flow is back to running and SSE subscriber is attached. ..."
+# }
+
+# Yield again. You will be woken on subsequent milestones and the terminal.
+sessions_yield(message="Approved. Watching for post-merge events.")
+```
+
+**Resuming with feedback:**
+
+```python
+langgraph_resume(
+    payload="block_revise: The PR is missing tests for the edge case in login_handler.py"
+)
+# Normalizes to: {decision: "block_revise", feedback: "The PR is missing..."}
+```
+
+**Resume guard** — if the flow is not in `status: "waiting"`, the tool returns an error rather than blindly posting to LangGraph. Check `langgraph_inspect` first if unsure.
+
+---
+
+## Failure modes (from real history)
+
+### KeyError: 'spec_path' (BINGO-9, BINGO-11)
+
+**Symptom:** dispatch returns `status: "accepted"`, milestone events fire briefly, then workflow fails with a terminal event containing `KeyError: 'spec_path'` (or another missing field).
+
+**Root cause:** `input` passed to dispatch didn't include the required `spec_path` key. LangGraph schema enforcement silently drops unknown keys; the workflow state was populated with only the keys that matched, so downstream nodes that read `spec_path` raised `KeyError`.
+
+**Fix:**
+1. Create the spec file (e.g. `feature/BINGO-11/tech-spec.md`) in the repo.
+2. Commit and push to `main` (or whichever branch the workflow targets).
+3. Dispatch again with `spec_path` set to the exact file path, not a description.
+
+### Stale plugin flow status after gateway restart
+
+**Symptom:** `langgraph_inspect` shows `status: "running"`, but no events are arriving and the LangGraph thread is actually at a HITL interrupt or already completed.
+
+**Root cause:** Plugin managed TaskFlow state lives in process memory. A gateway restart wipes it. The plugin's view and LangGraph's view diverge.
+
+**Fix:** Use the direct LangGraph API to check truth (see escape hatch below), then call `langgraph_resume` with the correct payload if the thread is waiting, or take no action if it already completed.
+
+### Post-resume events not surfacing (pre-v0.10.0 / Phase 5 gap)
+
+**Symptom:** `langgraph_resume` returns `status: "resumed"`, but the agent is never woken again — even though the workflow continued running, passed through more milestones, and reached a terminal.
+
+**Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake. BINGO-9 was the dogfood run that caught this — the merge landed on LangGraph but Kit never learned the terminal had fired.
+
+**Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch. If you are seeing this on a patched version, check that the gateway is actually running the updated plugin binary (`grep -c "resume_run_id" dist/index.js`).
+
+### LangGraph POC unreachable
+
+**Symptom:** `langgraph_dispatch` returns `status: "error"` with a message like `ETIMEDOUT` or `connect ECONNREFUSED`. Or the call hangs until the 10 s client timeout.
+
+**Root cause:** The LangGraph dev server (POC EC2, typically `http://10.41.1.198:2024`) is down, overloaded, or the route is blocked.
+
+**Fix:** Bounce the POC EC2 instance and retry. If the connection times out (vs. refused), the host is up but the port is not listening — restart the `langgraph dev` process on the POC.
+
+### Wake reply lands at channel root, not in thread (pre-v0.11.0)
+
+**Symptom:** When a workflow event fires and the plugin wakes the agent, the agent's reply appears at channel root instead of inside the originating thread.
+
+**Root cause:** `openclaw agent` CLI has no `--thread-id` flag and the runtime doesn't synthesize Slack reply context from the session-key shape alone. Pre-v0.11.0, wake messages contained no guidance on where to reply.
+
+**Fix (v0.11.0+):** Wake messages for thread-bound sessions now include a `[reply-hint]` line at the top:
+
+```
+[reply-hint] This wake was bound to a Slack thread. Reply IN-THREAD by
+passing threadId="<ts>" on your next message tool call (channel=<ch>).
+Default outbound otherwise lands at channel root.
+```
+
+Honour the hint. Extract the `threadId` and `channel` values from the hint and pass them in your outbound message tool call.
+
+---
+
+## Direct LangGraph API escape hatch
+
+Use direct HTTP calls when:
+- The plugin's flow status is stale (e.g. after gateway restart) and you need truth.
+- `langgraph_resume` can't find the flow (flow record was lost with the gateway restart).
+- You need to inspect raw thread state or run history.
+
+**Check thread state:**
+```bash
+curl -s http://10.41.1.198:2024/threads/<langgraph_thread_id>/state \
+  | jq '{status: .status, next: .next, values_keys: (.values // {} | keys)}'
+```
+
+**Resume via direct API (when plugin resume fails):**
+```bash
+curl -s -X POST http://10.41.1.198:2024/threads/<tid>/runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "assistant_id": "fleet",
+    "command": {"resume": {"decision": "approve", "feedback": ""}}
+  }'
+```
+
+After a direct-API resume, the plugin has no SSE subscriber on the new run. Post-resume events will not surface via the wake mechanism. You'll need to poll thread state manually or wait for the workflow's native webhook callback (if configured).
+
+---
+
+## Session key shapes
+
+The plugin binds each managed flow to the session key of the dispatching agent turn. Session key format:
+
+- **Slack DM:** `agent:main:slack:direct:<user_id_lower>`
+- **Slack channel thread:** `agent:main:slack:channel:<channel_id_lower>:thread:<thread_ts>`
+
+The plugin handles session binding automatically. You don't set this — it comes from the tool context. It's useful to know when diagnosing wake routing: if wake events are landing in the wrong session (e.g. a later DM instead of the original thread), the flow was dispatched from a different session than where you're responding.
+
+---
+
+## Configuration (plugin config keys)
+
+These live under `plugins.entries.openclaw-langgraph-bridge.config`. In normal operation you don't touch them; they are set once at install.
+
+| key | default | purpose |
+|---|---|---|
+| `langgraphBaseUrl` | (required) | Base URL of the LangGraph server, e.g. `http://10.41.1.198:2024` |
+| `callbackToken` | (required) | Bearer token for inbound webhook authentication |
+| `callbackPublicBaseUrl` | (optional) | Public base URL the LangGraph server POSTs events to (appended with `/plugins/openclaw-langgraph-bridge/events`) |
+| `agentId` | `"main"` | Agent id to wake. Only change if you have multiple named agents on one gateway |
+| `allowedWorkflows` | (empty = no restriction) | Allowlist of assistant ids / graph ids the agent may dispatch |
+| `defaultTimeoutMs` | `10000` | Per-request timeout for the LangGraph HTTP client |
+
+---
+
+## Out of scope
+
+- Writing or modifying LangGraph workflow graphs.
+- Infrastructure provisioning (LangGraph server, EC2 POC, networking).
+- LangGraph server administration (upgrades, thread cleanup, log rotation).
+- OpenClaw gateway setup or plugin installation.
+- Authoring the `fleet` workflow itself — see `ggettert/aidlc-fleet-poc`.
