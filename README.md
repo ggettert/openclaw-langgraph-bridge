@@ -1,55 +1,73 @@
 # openclaw-langgraph-bridge
 
-OpenClaw plugin that bridges an OpenClaw agent acting as **orchestrator** with one or more LangGraph workflows acting as **execution**, while keeping per-thread isolation by construction.
+OpenClaw plugin that bridges an OpenClaw agent (orchestrator) with one or more LangGraph workflows (execution), with per-Slack-thread isolation and proactive wake-back when workflows emit events.
 
 The agent stays in control of the conversation. The plugin handles the wire protocol.
 
-> **Status:** Phase 0 scaffold. Ships a single stubbed tool so the loading path can be exercised end-to-end before real LangGraph dispatch lands. See [DESIGN.md](./DESIGN.md) for the full architecture and phase plan.
+> **Status:** Production-shape. v0.11.0+ ships three tools (`langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`), an SSE event subscriber for live milestone/HITL/terminal streaming, a webhook endpoint for LangGraph-initiated callbacks, and proactive Slack wake via the `openclaw agent` CLI primitive. See [DESIGN.md](./DESIGN.md) for architecture history and [AUDIT-2026-06-16.md](./AUDIT-2026-06-16.md) for the latest adversarial review.
 
 ## The shape
 
 ```
-human in Slack thread
+human in Slack thread or DM
         │
         ▼
-agent (orchestrator) ── langgraph_dispatch ──► plugin ──► langgraph
+agent (orchestrator) ── langgraph_dispatch ──► plugin ──► LangGraph
         ▲                                                     │
-        │                  events:                            │
+        │                  events stream over SSE:            │
         │                  status   → flow state only         │
         │                  milestone│decision│terminal│hitl   │
-        │                  ──────── enqueueSystemEvent +      │
-        └────────────────────────── requestHeartbeat ◄────────┘
-                                    (webhook in plugin)
+        │                  ──────── wakeAgent (CLI) ◄─────────┘
+        │
+        │
+        └── human reply ── langgraph_resume ──► plugin ──► LangGraph
+                                                  (command:resume + new SSE)
 ```
 
-- Every Slack thread is its own openclaw session → its own orchestrator instance.
-- The plugin tracks each LangGraph run as a `managedFlow` bound to that session.
-- `status` events are absorbed silently — they update flow state, they do not wake the model.
-- `milestone | decision | terminal | hitl` events wake the agent so it can decide what to say.
-- HITL replies route back to the same session and are forwarded to LangGraph via the plugin's `inbound_claim` hook (Phase 3).
+- Every Slack thread / DM is its own openclaw session → its own orchestrator instance
+- The plugin tracks each LangGraph run as a `managedFlow` bound to that session
+- `status` events absorb silently (flow state only)
+- `milestone | decision | terminal | hitl` events wake the agent via `openclaw agent --agent <id> --session-key <key> --message <text>`
+- Resume runs open their own SSE subscriber so post-resume events also wake the agent (Phase 5, v0.10.0+)
 
-## Why this exists
+## Tools
 
-See the design history in the carpe `aidlc-fleet-poc` palace drawer if you have access. Short version: the V1 product-bot architecture wants Kit to *be* the orchestrator (not a thin trigger, not a stream-puller) while LangGraph workflows do execution. This plugin is the seam that makes that seamless from inside the agent — no HTTP plumbing visible in the prompt, no sessionKey wrangling, no proxy hacks.
+| Tool | Purpose |
+|---|---|
+| `langgraph_dispatch(workflow, input, decision_only?)` | Start a new workflow run. Returns once LangGraph has accepted the run and emitted a run_id (typically &lt; 10s). |
+| `langgraph_inspect(flow_id?)` | Read the current state of a flow. Defaults to the latest flow in this session. |
+| `langgraph_resume(payload, flow_id?)` | Resume a workflow that is waiting at a HITL interrupt. Normalizes common keyword replies (`approve`, `block_revise: ...`) into `{decision, feedback}` shape. |
 
-## Build
+See [`skills/langgraph-bridge/SKILL.md`](./skills/langgraph-bridge/SKILL.md) for the consumer-side reference with worked examples, payload normalization rules, and the canonical dispatch→yield→wake→resume→terminal lifecycle.
+
+## Install
+
+See [INSTALL.md](./INSTALL.md) for the per-bot setup runbook (tarball download, plugin config, gateway config, verification).
+
+## Build from source
 
 ```bash
 npm install
 npm run build
-npm run plugin:build       # regenerates openclaw.plugin.json from the entry
-npm run plugin:validate    # validates the manifest matches the entry
 npm test
 ```
 
-## Install (local dev)
+## Configuration
 
-```bash
-openclaw plugins install /path/to/openclaw-langgraph-bridge
-openclaw plugins inspect openclaw-langgraph-bridge --runtime
-```
+These keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.openclaw/openclaw.json`:
 
-Restart the gateway. The `langgraph_dispatch` tool should now be visible to the configured agent.
+| Key | Required | Default | Purpose |
+|---|---|---|---|
+| `langgraphBaseUrl` | ✓ | — | Base URL of the LangGraph server (e.g. `http://10.41.1.198:2024`) |
+| `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs (`Authorization: Bearer <token>`) |
+| `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server POSTs events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
+| `agentId` | — | `"main"` | Agent id to wake when events fire |
+| `allowedWorkflows` | — | `[]` (no restriction) | Allowlist of assistant/graph ids the agent may dispatch |
+| `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client |
+
+## Why this exists
+
+Carpe's V1 product-bot architecture wants Kit (and other agents) to *be* the orchestrator, not a thin trigger. LangGraph workflows do execution; OpenClaw agents drive decisions and conversation. This plugin is the seam that makes that work from inside an agent turn — no HTTP plumbing in the prompt, no session-key wrangling, no proxy hacks.
 
 ## License
 
