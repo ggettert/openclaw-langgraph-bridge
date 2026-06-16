@@ -45,6 +45,19 @@ import { wakeAgent } from "./wake-agent.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+// Terminal task-flow statuses per OpenClaw SDK `TaskFlowStatus`:
+//   "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed"
+//   | "cancelled" | "lost"
+// The last four are terminal — the flow will not transition out of them.
+// Hoisted module-level (vs per-call new Set) so the guard in processEvent
+// is allocation-free on every webhook event.
+const TERMINAL_FLOW_STATUSES: ReadonlySet<string> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "lost",
+]);
+
 const VALID_KINDS: ReadonlySet<LanggraphEventKind> = new Set([
   "status",
   "milestone",
@@ -141,17 +154,15 @@ export function processEvent(params: {
   //   - `finish` on an already-finished flow throws a revision
   //     conflict, propagates up to a 500 in `buildHandler`, which
   //     LangGraph treats as retryable (#10).
+  //   - `runTask` for status/milestone after terminal records spurious
+  //     post-terminal task progress entries, which mislead an operator
+  //     reading flow history.
   //
-  // Status events are always ignored anyway (they don't mutate flow
-  // state), but we keep them out of the wake path too for terminated
-  // flows so they don't fire stale wakes.
-  // Per OpenClaw SDK `TaskFlowStatus`: "queued" | "running" | "waiting" |
-  // "blocked" | "succeeded" | "failed" | "cancelled" | "lost". The last four
-  // are terminal — the flow will not transition out of them.
-  const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "lost"]);
+  // We also suppress the wake path on terminated flows so we don't fire
+  // a stale agent turn for a flow the consumer already saw close.
   const flowAlreadyTerminated =
     typeof currentFlow?.status === "string" &&
-    TERMINAL_STATUSES.has(currentFlow.status);
+    TERMINAL_FLOW_STATUSES.has(currentFlow.status);
   if (flowAlreadyTerminated) {
     deps.logger?.info?.(
       `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status}`,
