@@ -349,7 +349,14 @@ export type StreamingDispatchParams = {
   threadId: string;
   flowId: string;
   assistantId: string;
+  /**
+   * Either `input` (initial run) OR `command` (resume from interrupt).
+   * LangGraph's RunCreateStateful schema accepts both, but only one is
+   * meaningful per request. When `command` is provided, `input` is
+   * ignored.
+   */
   input?: Record<string, unknown> | null;
+  command?: { resume?: unknown; [k: string]: unknown } | null;
   metadata?: Record<string, unknown>;
   handlers: StreamHandlers;
   fetchImpl?: typeof fetch;
@@ -371,6 +378,7 @@ export function dispatchAndStream(
     flowId,
     assistantId,
     input,
+    command,
     metadata,
     handlers,
     fetchImpl,
@@ -391,12 +399,24 @@ export function dispatchAndStream(
           "content-type": "application/json",
           accept: "text/event-stream",
         },
-        body: JSON.stringify({
-          assistant_id: assistantId,
-          input: input ?? null,
-          metadata: metadata ?? undefined,
-          stream_mode: ["updates", "custom"],
-        }),
+        // Resume runs send `command` (e.g. {resume: ...}); initial runs
+        // send `input`. Sending both is undefined behaviour per the
+        // RunCreateStateful schema, so only the relevant key is included.
+        body: JSON.stringify(
+          command
+            ? {
+                assistant_id: assistantId,
+                command,
+                metadata: metadata ?? undefined,
+                stream_mode: ["updates", "custom"],
+              }
+            : {
+                assistant_id: assistantId,
+                input: input ?? null,
+                metadata: metadata ?? undefined,
+                stream_mode: ["updates", "custom"],
+              },
+        ),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {

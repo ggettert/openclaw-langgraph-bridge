@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { processEvent, type WebhookHandlerDeps } from "./webhook-handler.js";
+import type { WakeAgentParams } from "./wake-agent.js";
 
 type AnyArgs = unknown[];
 
@@ -8,13 +9,15 @@ function makeDeps() {
     runTask: vi.fn<(...args: AnyArgs) => unknown>(),
     setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
     finish: vi.fn<(...args: AnyArgs) => unknown>(),
-    enqueueSystemEvent: vi.fn<(text: string, opts: { sessionKey: string; contextKey?: string | null }) => boolean>(() => true),
-    requestHeartbeat: vi.fn<(opts: { source: string; intent: string; reason?: string; sessionKey?: string; coalesceMs?: number }) => void>(),
-    get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({ owner_key: "agent:main:dm:user", revision: 1 })),
+    get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
+      () => ({ owner_key: "agent:main:dm:user", revision: 1 }),
+    ),
+    wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
   };
   const deps: WebhookHandlerDeps = {
     expectedToken: "secret",
     pluginId: "openclaw-langgraph-bridge",
+    agentId: "main",
     runtime: {
       tasks: {
         managedFlows: {
@@ -26,17 +29,14 @@ function makeDeps() {
           }),
         },
       },
-      system: {
-        enqueueSystemEvent: calls.enqueueSystemEvent,
-        requestHeartbeat: calls.requestHeartbeat,
-      },
     },
+    wake: calls.wake,
   };
   return { deps, calls };
 }
 
 describe("processEvent — status", () => {
-  it("calls runTask, enqueues with noise contextKey, does NOT wake", () => {
+  it("calls runTask, does NOT wake, emits NO system event", () => {
     const { deps, calls } = makeDeps();
     const result = processEvent({
       body: {
@@ -52,18 +52,14 @@ describe("processEvent — status", () => {
     });
     expect(result).toEqual({ status: "ok", action: "flow-update-only" });
     expect(calls.runTask).toHaveBeenCalledOnce();
-    expect(calls.enqueueSystemEvent).toHaveBeenCalledOnce();
-    expect((calls.enqueueSystemEvent.mock.calls[0]![1] as { contextKey: string | null }).contextKey).toBe(
-      "langgraph:f1:status",
-    );
-    expect(calls.requestHeartbeat).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
     expect(calls.setWaiting).not.toHaveBeenCalled();
     expect(calls.finish).not.toHaveBeenCalled();
   });
 });
 
 describe("processEvent — milestone", () => {
-  it("calls runTask + enqueues + WAKES with reason langgraph-wake-light", () => {
+  it("calls runTask + wakes with agentId + sessionKey + formatted message", () => {
     const { deps, calls } = makeDeps();
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
@@ -72,17 +68,16 @@ describe("processEvent — milestone", () => {
       deps,
     });
     expect(calls.runTask).toHaveBeenCalledOnce();
-    expect(calls.enqueueSystemEvent).toHaveBeenCalledOnce();
-    expect((calls.enqueueSystemEvent.mock.calls[0]![1] as { contextKey: string | null }).contextKey).toBeNull();
-    expect(calls.requestHeartbeat).toHaveBeenCalledOnce();
-    const hbLight = calls.requestHeartbeat.mock.calls[0]![0] as { reason?: string; sessionKey?: string };
-    expect(hbLight.reason).toBe("langgraph-wake-light");
-    expect(hbLight.sessionKey).toBe("agent:main:dm:user");
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.agentId).toBe("main");
+    expect(wakeArgs.sessionKey).toBe("agent:main:dm:user");
+    expect(wakeArgs.message).toMatch(/\[langgraph:milestone\] build:ok/);
   });
 });
 
 describe("processEvent — decision", () => {
-  it("does NOT mutate flow but wakes with decision reason", () => {
+  it("does NOT mutate flow but wakes with decision message", () => {
     const { deps, calls } = makeDeps();
     processEvent({
       body: {
@@ -98,10 +93,10 @@ describe("processEvent — decision", () => {
     expect(calls.runTask).not.toHaveBeenCalled();
     expect(calls.setWaiting).not.toHaveBeenCalled();
     expect(calls.finish).not.toHaveBeenCalled();
-    expect(calls.enqueueSystemEvent).toHaveBeenCalledOnce();
-    expect(calls.requestHeartbeat).toHaveBeenCalledOnce();
-    const hbDecision = calls.requestHeartbeat.mock.calls[0]![0] as { reason?: string };
-    expect(hbDecision.reason).toBe("langgraph-wake-decision");
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toMatch(/\[langgraph:decision\] needs:input/);
+    expect(wakeArgs.message).toMatch(/which target env\?/);
   });
 });
 
@@ -134,9 +129,9 @@ describe("processEvent — hitl", () => {
       interrupt_id: "i-99",
       prompt: "approve deploy?",
     });
-    expect(calls.requestHeartbeat).toHaveBeenCalledOnce();
-    const hbHitl = calls.requestHeartbeat.mock.calls[0]![0] as { reason?: string };
-    expect(hbHitl.reason).toBe("langgraph-wake-hitl");
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toMatch(/\[langgraph:hitl\] approval-gate/);
   });
 });
 
@@ -169,14 +164,14 @@ describe("processEvent — terminal", () => {
       terminal_summary: "deploy succeeded",
       data: { exit_code: 0 },
     });
-    expect(calls.requestHeartbeat).toHaveBeenCalledOnce();
-    const hbTerm = calls.requestHeartbeat.mock.calls[0]![0] as { reason?: string };
-    expect(hbTerm.reason).toBe("langgraph-wake-terminal");
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toMatch(/\[langgraph:terminal\] ok/);
   });
 });
 
 describe("processEvent — text formatting", () => {
-  it("truncates summary to 280 chars", () => {
+  it("truncates summary to 280 chars in wake message", () => {
     const { deps, calls } = makeDeps();
     processEvent({
       body: {
@@ -189,9 +184,22 @@ describe("processEvent — text formatting", () => {
       flowRevision: 1,
       deps,
     });
-    const text = calls.enqueueSystemEvent.mock.calls[0]![0] as string;
-    // Header + newline + 280 'x' chars.
-    expect(text).toMatch(/\[langgraph:decision\] long-event\n/);
-    expect(text.split("\n")[1]!.length).toBe(280);
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toMatch(/\[langgraph:decision\] long-event\n/);
+    expect(wakeArgs.message.split("\n")[1]!.length).toBe(280);
+  });
+});
+
+describe("processEvent — agentId plumbed from deps", () => {
+  it("uses configured agentId in wake call (not hardcoded 'main')", () => {
+    const { deps, calls } = makeDeps();
+    deps.agentId = "kit-prod";
+    processEvent({
+      body: { kind: "decision", flow_id: "f1", title: "x" },
+      sessionKey: "agent:kit-prod:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].agentId).toBe("kit-prod");
   });
 });
