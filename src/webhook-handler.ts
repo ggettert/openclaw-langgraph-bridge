@@ -125,9 +125,40 @@ export function processEvent(params: {
   // takes expectedRevision. The flow likely moved through createManaged
   // -> resume(running) -> ... by the time we get here.
   const currentFlow = flows.get(body.flow_id) as
-    | { revision?: number }
+    | { revision?: number; status?: string }
     | undefined;
   const flowRevision = Number(currentFlow?.revision ?? params.flowRevision ?? 0);
+
+  // Defense in depth (#10 / #16): if the flow is already in a terminal
+  // state, ignore replay frames — LangGraph's stream + webhook can
+  // deliver the same kind twice or replay HITL/recap frames out of
+  // causal order after `graph:end`. We must NOT call `setWaiting` /
+  // `finish` / `runTask` against a terminated flow:
+  //   - `setWaiting` on a terminated flow corrupts its status from
+  //     `succeeded` -> `waiting`, which causes any consumer following
+  //     `inspect`->`resume` to double-fire `langgraph_resume` into an
+  //     already-completed flow (#16).
+  //   - `finish` on an already-finished flow throws a revision
+  //     conflict, propagates up to a 500 in `buildHandler`, which
+  //     LangGraph treats as retryable (#10).
+  //
+  // Status events are always ignored anyway (they don't mutate flow
+  // state), but we keep them out of the wake path too for terminated
+  // flows so they don't fire stale wakes.
+  // Per OpenClaw SDK `TaskFlowStatus`: "queued" | "running" | "waiting" |
+  // "blocked" | "succeeded" | "failed" | "cancelled" | "lost". The last four
+  // are terminal — the flow will not transition out of them.
+  const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "lost"]);
+  const flowAlreadyTerminated =
+    typeof currentFlow?.status === "string" &&
+    TERMINAL_STATUSES.has(currentFlow.status);
+  if (flowAlreadyTerminated) {
+    deps.logger?.info?.(
+      `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status}`,
+    );
+    return { status: "ok", action: "ignored:post-terminal" };
+  }
+
   const classification = classifyEvent({ kind });
   const title = body.title ?? `langgraph:${kind}`;
   const summary = (body.summary ?? "").slice(0, 280);

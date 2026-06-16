@@ -236,3 +236,185 @@ describe("processEvent — agentId plumbed from deps", () => {
     expect(calls.wake.mock.calls[0]![0].agentId).toBe("kit-prod");
   });
 });
+
+describe("processEvent — terminated-flow guard (#10, #16)", () => {
+  function makeTerminatedDeps(terminalStatus: string) {
+    const calls = {
+      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
+      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
+      finish: vi.fn<(...args: AnyArgs) => unknown>(),
+      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
+        () => ({
+          owner_key: "agent:main:dm:user",
+          revision: 5,
+          status: terminalStatus,
+        }),
+      ),
+      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
+    };
+    const deps: WebhookHandlerDeps = {
+      expectedToken: "secret",
+      pluginId: "openclaw-langgraph-bridge",
+      agentId: "main",
+      runtime: {
+        tasks: {
+          managedFlows: {
+            bindSession: () => ({
+              get: calls.get,
+              runTask: calls.runTask,
+              setWaiting: calls.setWaiting,
+              finish: calls.finish,
+            }),
+          },
+        },
+      },
+      wake: calls.wake,
+    };
+    return { deps, calls };
+  }
+
+  it("ignores stale `hitl` after `succeeded` — no setWaiting, no wake (#16)", () => {
+    const { deps, calls } = makeTerminatedDeps("succeeded");
+    const result = processEvent({
+      body: {
+        kind: "hitl",
+        flow_id: "f1",
+        title: "merge_gate",
+        summary: "stale interrupt",
+        interrupt_id: "i-stale",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(result).toEqual({
+      status: "ok",
+      action: "ignored:post-terminal",
+    });
+    expect(calls.setWaiting).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale `terminal` after `succeeded` — no finish, no wake, no 500 (#10)", () => {
+    const { deps, calls } = makeTerminatedDeps("succeeded");
+    const result = processEvent({
+      body: {
+        kind: "terminal",
+        flow_id: "f1",
+        title: "graph:end",
+        summary: "duplicate terminal",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(result).toEqual({
+      status: "ok",
+      action: "ignored:post-terminal",
+    });
+    expect(calls.finish).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale `milestone` after `cancelled`", () => {
+    const { deps, calls } = makeTerminatedDeps("cancelled");
+    processEvent({
+      body: {
+        kind: "milestone",
+        flow_id: "f1",
+        title: "node:merge",
+        summary: "recap",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.runTask).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
+
+  it("treats `failed` as terminal", () => {
+    const { deps, calls } = makeTerminatedDeps("failed");
+    processEvent({
+      body: { kind: "hitl", flow_id: "f1", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.setWaiting).not.toHaveBeenCalled();
+  });
+
+  it("treats `lost` as terminal", () => {
+    const { deps, calls } = makeTerminatedDeps("lost");
+    processEvent({
+      body: { kind: "terminal", flow_id: "f1", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.finish).not.toHaveBeenCalled();
+  });
+
+  it("does NOT treat `blocked` as terminal — still processes (blocked can recover)", () => {
+    const { deps, calls } = makeTerminatedDeps("blocked");
+    processEvent({
+      body: { kind: "hitl", flow_id: "f1", title: "real-interrupt" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.setWaiting).toHaveBeenCalledOnce();
+  });
+
+  it("non-terminal status (`running`, `waiting`) is NOT guarded — processes normally", () => {
+    const { deps: depsRunning, calls: callsRunning } = makeTerminatedDeps("running");
+    processEvent({
+      body: { kind: "hitl", flow_id: "f1", title: "real-interrupt" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps: depsRunning,
+    });
+    expect(callsRunning.setWaiting).toHaveBeenCalledOnce();
+    expect(callsRunning.wake).toHaveBeenCalledOnce();
+  });
+
+  it("missing status field is NOT guarded — processes normally", () => {
+    // Backward compat: older flow records may not include `status` in get() return.
+    const calls = {
+      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
+      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
+      finish: vi.fn<(...args: AnyArgs) => unknown>(),
+      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
+        () => ({ owner_key: "agent:main:dm:user", revision: 1 }),
+        // no status field
+      ),
+      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
+    };
+    const deps: WebhookHandlerDeps = {
+      expectedToken: "secret",
+      pluginId: "openclaw-langgraph-bridge",
+      agentId: "main",
+      runtime: {
+        tasks: {
+          managedFlows: {
+            bindSession: () => ({
+              get: calls.get,
+              runTask: calls.runTask,
+              setWaiting: calls.setWaiting,
+              finish: calls.finish,
+            }),
+          },
+        },
+      },
+      wake: calls.wake,
+    };
+    processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.runTask).toHaveBeenCalledOnce();
+    expect(calls.wake).toHaveBeenCalledOnce();
+  });
+});

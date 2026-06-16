@@ -293,16 +293,22 @@ In-flight LangGraph runs are NOT canceled by uninstall. They continue on the Lan
 
 ---
 
-## Known issues at v0.11.0
+## Known issues at v0.11.2
 
-These are tracked as open GitHub issues against `ggettert/openclaw-langgraph-bridge`. Each will bite eventually if not avoided:
+Fixed in v0.11.2 (was open at v0.11.0/v0.11.1):
+- ~~**#14**: Release tarball was missing `node_modules` — silent plugin load failure on install.~~ Fixed: release tarball now bundles runtime deps via `npm ci --omit=dev`.
+- ~~**#10 (M5)**: SSE + webhook double-terminal causes LangGraph retry storm.~~ Fixed: `processEvent` is now state-aware; ignores all event kinds for terminated flows.
+- ~~**#16**: Stale `hitl` after `graph:end` flips flow status `succeeded → waiting`.~~ Same fix as #10.
+- ~~**#13**: Release tarball missing INSTALL.md / AUDIT / DESIGN / skills/.~~ Fixed in v0.11.2 tarball.
 
-- **#10 (M5)**: SSE + webhook double-terminal causes LangGraph webhook retry loop. Workaround: leave `callbackPublicBaseUrl` unset (SSE-only mode) until fixed.
+Still open at v0.11.2 — each will bite eventually if not avoided:
+
 - **#7 (M2)**: Failed dispatches leave orphan "queued" flow records visible to `langgraph_inspect`. No data loss, but confuses inspect output.
 - **#6 (M1)**: `decision_only` parameter has no effect. Don't rely on it; expect every milestone to fire a wake.
-- **#11 (M6)**: `callbackToken` exposure path to LangGraph metadata — unverified at v0.11.0. If LangGraph workflow authors are untrusted, don't deploy with webhooks enabled until verified.
+- **#11 (M6)**: `callbackToken` exposure path to LangGraph metadata — unverified. If LangGraph workflow authors are untrusted, audit before deploying with webhooks enabled.
 - **#8 (M3)**: Dead code in `LanggraphClient.resumeRun()` has wrong wire format. Cosmetic until something revives it.
 - **#9 (M4)**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.
+- **#15**: `typebox` (unscoped) vs `@sinclair/typebox` (scoped, canonical). Works; suggestion to swap on next refresh.
 
 Track the full list at: https://github.com/ggettert/openclaw-langgraph-bridge/issues
 
