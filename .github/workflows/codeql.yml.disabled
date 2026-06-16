@@ -1,0 +1,47 @@
+# CodeQL is disabled in this repo.
+#
+# CodeQL on a private GitHub repo requires GitHub Advanced Security (GHAS),
+# which is not provisioned on ggettert/. With CodeQL enabled the workflow
+# fails on every push with:
+#
+#     CodeQL is not available for this private repository...
+#
+# That's noisy + misleading + clutters the Actions tab with red runs.
+#
+# When this plugin moves to a host that has GHAS (e.g. the carpe org if
+# it's enabled there, or any future public/open-source release), restore
+# the workflow by renaming this file from `codeql.yml.disabled` to
+# `codeql.yml`. The previous config (Node + JavaScript/TypeScript default
+# queries, weekly schedule, PR + main triggers) is preserved below.
+#
+# ---------------------------------------------------------------------
+# name: CodeQL
+#
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
+#   schedule:
+#     - cron: "0 6 * * 1"
+#
+# jobs:
+#   analyze:
+#     name: Analyze (javascript-typescript)
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 30
+#     permissions:
+#       security-events: write
+#       actions: read
+#       contents: read
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Initialize CodeQL
+#         uses: github/codeql-action/init@v3
+#         with:
+#           languages: javascript-typescript
+#           build-mode: none
+#       - name: Perform CodeQL Analysis
+#         uses: github/codeql-action/analyze@v3
+#         with:
+#           category: "/language:javascript-typescript"

@@ -30,13 +30,30 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Re-install with runtime-only deps so the tarball ships a clean
+      # node_modules/ that resolves typebox + any other runtime imports
+      # without the dev tree (vitest, typescript, @types/*, etc).
+      #
+      # Without this step the released tarball would load fail at runtime
+      # with `Cannot find module 'typebox'` (issue #14 — DevOps bot caught
+      # this on first install of v0.11.1).
+      - name: Install runtime deps only
+        run: |
+          rm -rf node_modules
+          npm ci --omit=dev
+
       - name: Package release tarball
         run: |
           tar -czf openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz \
             dist/ \
+            node_modules/ \
             openclaw.plugin.json \
             package.json \
-            README.md
+            README.md \
+            INSTALL.md \
+            AUDIT-2026-06-16.md \
+            DESIGN.md \
+            skills/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

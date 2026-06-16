@@ -45,6 +45,19 @@ import { wakeAgent } from "./wake-agent.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+// Terminal task-flow statuses per OpenClaw SDK `TaskFlowStatus`:
+//   "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed"
+//   | "cancelled" | "lost"
+// The last four are terminal — the flow will not transition out of them.
+// Hoisted module-level (vs per-call new Set) so the guard in processEvent
+// is allocation-free on every webhook event.
+const TERMINAL_FLOW_STATUSES: ReadonlySet<string> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "lost",
+]);
+
 const VALID_KINDS: ReadonlySet<LanggraphEventKind> = new Set([
   "status",
   "milestone",
@@ -125,9 +138,38 @@ export function processEvent(params: {
   // takes expectedRevision. The flow likely moved through createManaged
   // -> resume(running) -> ... by the time we get here.
   const currentFlow = flows.get(body.flow_id) as
-    | { revision?: number }
+    | { revision?: number; status?: string }
     | undefined;
   const flowRevision = Number(currentFlow?.revision ?? params.flowRevision ?? 0);
+
+  // Defense in depth (#10 / #16): if the flow is already in a terminal
+  // state, ignore replay frames — LangGraph's stream + webhook can
+  // deliver the same kind twice or replay HITL/recap frames out of
+  // causal order after `graph:end`. We must NOT call `setWaiting` /
+  // `finish` / `runTask` against a terminated flow:
+  //   - `setWaiting` on a terminated flow corrupts its status from
+  //     `succeeded` -> `waiting`, which causes any consumer following
+  //     `inspect`->`resume` to double-fire `langgraph_resume` into an
+  //     already-completed flow (#16).
+  //   - `finish` on an already-finished flow throws a revision
+  //     conflict, propagates up to a 500 in `buildHandler`, which
+  //     LangGraph treats as retryable (#10).
+  //   - `runTask` for status/milestone after terminal records spurious
+  //     post-terminal task progress entries, which mislead an operator
+  //     reading flow history.
+  //
+  // We also suppress the wake path on terminated flows so we don't fire
+  // a stale agent turn for a flow the consumer already saw close.
+  const flowAlreadyTerminated =
+    typeof currentFlow?.status === "string" &&
+    TERMINAL_FLOW_STATUSES.has(currentFlow.status);
+  if (flowAlreadyTerminated) {
+    deps.logger?.info?.(
+      `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status}`,
+    );
+    return { status: "ok", action: "ignored:post-terminal" };
+  }
+
   const classification = classifyEvent({ kind });
   const title = body.title ?? `langgraph:${kind}`;
   const summary = (body.summary ?? "").slice(0, 280);
