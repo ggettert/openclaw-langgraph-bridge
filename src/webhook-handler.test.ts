@@ -190,6 +190,39 @@ describe("processEvent — text formatting", () => {
   });
 });
 
+describe("processEvent — reply hint from sessionKey", () => {
+  it("prepends a Slack-thread reply hint when sessionKey carries :slack:channel:<ch>:thread:<ts>", () => {
+    const { deps, calls } = makeDeps();
+    processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "coder:done" },
+      sessionKey:
+        "agent:main:slack:channel:c0ba88ychfz:thread:1781634334.310769",
+      flowRevision: 1,
+      deps,
+    });
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toMatch(/^\[reply-hint\]/);
+    expect(wakeArgs.message).toContain('threadId="1781634334.310769"');
+    expect(wakeArgs.message).toContain("channel=c0ba88ychfz");
+    expect(wakeArgs.message).toMatch(
+      /\[langgraph:milestone\] coder:done/,
+    );
+  });
+
+  it("omits the hint for plain DM session keys", () => {
+    const { deps, calls } = makeDeps();
+    processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "x" },
+      sessionKey: "agent:main:slack:dm:user-abc",
+      flowRevision: 1,
+      deps,
+    });
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).not.toMatch(/\[reply-hint\]/);
+    expect(wakeArgs.message.startsWith("[langgraph:milestone]")).toBe(true);
+  });
+});
+
 describe("processEvent — agentId plumbed from deps", () => {
   it("uses configured agentId in wake call (not hardcoded 'main')", () => {
     const { deps, calls } = makeDeps();
