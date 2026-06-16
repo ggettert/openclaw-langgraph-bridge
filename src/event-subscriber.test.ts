@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   classifyStreamFrame,
+  dispatchAndStream,
   parseSseFrame,
   type ClassifyResult,
 } from "./event-subscriber.js";
@@ -345,5 +346,81 @@ describe("classifyStreamFrame — skip", () => {
     expect(
       classifyStreamFrame({ event: "events", data: {} }, "f", 0).kind,
     ).toBe("skip");
+  });
+});
+
+describe("dispatchAndStream — request body shape", () => {
+  // Helper: capture the fetch body without actually streaming.
+  function makeCapturingFetch() {
+    const capture: { url?: string; body?: unknown } = {};
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      capture.url = url;
+      capture.body = init.body ? JSON.parse(init.body as string) : null;
+      // Return a Response that closes immediately with no body — the
+      // subscriber will treat it as an error, which is fine: we only
+      // care that the request was shaped correctly.
+      return new Response("", { status: 200 });
+    });
+    return { fetchImpl, capture };
+  }
+
+  it("initial dispatch sends `input`, not `command`", async () => {
+    const { fetchImpl, capture } = makeCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      metadata: { foo: "bar" },
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    // Let microtasks settle so the body is captured.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(capture.url).toMatch(/\/threads\/t1\/runs\/stream$/);
+    const body = capture.body as Record<string, unknown>;
+    expect(body.assistant_id).toBe("fleet");
+    expect(body.input).toEqual({ ticket_id: "X" });
+    expect("command" in body).toBe(false);
+    expect(body.stream_mode).toEqual(["updates", "custom"]);
+  });
+
+  it("resume dispatch sends `command`, not `input`", async () => {
+    const { fetchImpl, capture } = makeCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      command: { resume: { decision: "approve", feedback: "" } },
+      metadata: { openclaw_resume_source: "tool:langgraph_resume" },
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const body = capture.body as Record<string, unknown>;
+    expect(body.assistant_id).toBe("fleet");
+    expect(body.command).toEqual({ resume: { decision: "approve", feedback: "" } });
+    expect("input" in body).toBe(false);
+    expect(body.stream_mode).toEqual(["updates", "custom"]);
+  });
+
+  it("command takes precedence — input is ignored when command is set", async () => {
+    const { fetchImpl, capture } = makeCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ignored: true },
+      command: { resume: "x" },
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const body = capture.body as Record<string, unknown>;
+    expect(body.command).toEqual({ resume: "x" });
+    expect("input" in body).toBe(false);
   });
 });
