@@ -217,7 +217,12 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
           name: "langgraph_dispatch",
           label: "LangGraph Dispatch",
           description:
-            "Dispatch a LangGraph workflow run. The plugin creates a managed TaskFlow bound to the current session, kicks the run, and returns identifiers. status / milestone / decision / terminal / hitl events post back via the plugin webhook and surface as runtime events on the originating session.",
+            "Dispatch a LangGraph workflow run. The plugin creates a managed TaskFlow bound to the current session, kicks the run, and returns identifiers. status / milestone / decision / terminal / hitl events post back via the plugin webhook and surface as runtime events on the originating session.\n\nIMPORTANT: `input` must match the target workflow's state schema exactly. LangGraph silently drops unknown keys, which can cause downstream KeyErrors. For the `fleet` workflow specifically, required keys are `ticket_id`, `repo`, and `spec_path` — where `spec_path` is a path to an existing spec file *already committed* in the repo (e.g. `feature/BINGO-N/tech-spec.md`). Free-text descriptions are NOT a substitute. To inspect a workflow's schema: GET `<base>/assistants/<assistant_id>/schemas`.",
+          // Note: when the wake fires for an event tied to a Slack-threaded
+          // session, the wake message will include a `[reply-hint]` line
+          // pointing at the originating thread — see
+          // webhook-handler.ts#buildReplyHint. Honour it on outbound sends
+          // so milestone/decision/terminal posts land in the right thread.
           parameters: DispatchParams,
           execute: async (
             _toolCallId: string,
