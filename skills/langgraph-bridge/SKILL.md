@@ -8,7 +8,7 @@ argument-hint: "workflow id or graph id, plus structured input matching the targ
 
 Use this skill whenever you need to dispatch a durable LangGraph workflow from inside an agent turn and receive proactive wake-backs when that workflow emits events (milestones, HITL interrupts, terminal).
 
-Plugin: `openclaw-langgraph-bridge` v0.11.0+  
+Plugin: `openclaw-langgraph-bridge` v0.11.2+  
 Repo: github.com/ggettert/openclaw-langgraph-bridge  
 Three tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`
 
@@ -259,12 +259,19 @@ them in strict causal order. The duplicate `merge_gate` frame is stale — the g
 was already satisfied by the resume — but a consumer that reacts to frame *kind*
 alone could **double-fire `langgraph_resume`** into an already-completed flow.
 
-**Fix / guard:**
+**Fix (v0.11.2+):** The plugin now handles this server-side. `processEvent`
+checks the flow's status before any mutation; if the flow is already in a
+terminal state (`succeeded`, `failed`, `cancelled`, `lost` per the OpenClaw
+`TaskFlowStatus` enum), the stale frame is dropped with action
+`ignored:post-terminal` — no `setWaiting` call, no wake fired, no risk of
+double-firing `langgraph_resume`. Closed by #10 (M5) and #16 in v0.11.2.
+
+**Belt-and-suspenders guard for pre-v0.11.2 installs (still good practice anyway):**
 1. **`langgraph_inspect` before you `langgraph_resume`.** Treat `langgraph_inspect`
    as ground truth, not the raw frame. Treat ANY of these as terminal: `status:
-   "succeeded"`, `"failed"`, `"completed"`, or a `graph:end` summary in flow
-   state. If terminal, a trailing `merge_gate` HITL frame is stale — do **not**
-   call `langgraph_resume` again.
+   "succeeded"`, `"failed"`, `"cancelled"`, `"lost"`, or a `graph:end` summary
+   in flow state. If terminal, a trailing `merge_gate` HITL frame is stale — do
+   **not** call `langgraph_resume` again.
 2. The `langgraph_resume` guard helps (it errors unless the flow is `waiting`),
    but don't rely on it alone — confirm state with `langgraph_inspect` first.
 3. Trailing recap milestones (`merge:*`, `node:merge`) after terminal are
