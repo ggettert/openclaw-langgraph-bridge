@@ -307,7 +307,12 @@ In-flight LangGraph runs are NOT canceled by uninstall. They continue on the Lan
 
 ---
 
-## Known issues at v0.11.2
+## Known issues at v0.12.0
+
+Fixed in v0.12.0 (was open at v0.11.x):
+- ~~**#18**: No way for an agent to introspect a workflow's schema before dispatching.~~ Fixed: `langgraph_inspect_workflow` tool.
+- ~~**#19**: Skill didn't teach the introspect-before-dispatch pattern.~~ Fixed: skill update.
+- ~~**#20 (umbrella)**: Multi-workflow support was incomplete.~~ Fixed: `langgraph_list_workflows` discovery tool, `langgraph_inspect_workflow` schema tool, `allowedWorkflows` enforcement extended across all tools, allowlist visibility documented.
 
 Fixed in v0.11.2 (was open at v0.11.0/v0.11.1):
 - ~~**#14**: Release tarball was missing `node_modules` — silent plugin load failure on install.~~ Fixed: release tarball now bundles runtime deps via `npm ci --omit=dev`.
@@ -315,7 +320,7 @@ Fixed in v0.11.2 (was open at v0.11.0/v0.11.1):
 - ~~**#16**: Stale `hitl` after `graph:end` flips flow status `succeeded → waiting`.~~ Same fix as #10.
 - ~~**#13**: Release tarball missing INSTALL.md / AUDIT / DESIGN / skills/.~~ Fixed in v0.11.2 tarball.
 
-Still open at v0.11.2 — each will bite eventually if not avoided:
+Still open at v0.12.0 — each will bite eventually if not avoided:
 
 - **#7 (M2)**: Failed dispatches leave orphan "queued" flow records visible to `langgraph_inspect`. No data loss, but confuses inspect output.
 - **#6 (M1)**: `decision_only` parameter has no effect. Don't rely on it; expect every milestone to fire a wake.

@@ -8,7 +8,7 @@ argument-hint: "workflow id or graph id, plus structured input matching the targ
 
 Use this skill whenever you need to dispatch a durable LangGraph workflow from inside an agent turn and receive proactive wake-backs when that workflow emits events (milestones, HITL interrupts, terminal).
 
-Plugin: `openclaw-langgraph-bridge` v0.11.2+  
+Plugin: `openclaw-langgraph-bridge` v0.12.0+  
 Repo: github.com/ggettert/openclaw-langgraph-bridge  
 Four tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_resume`
 
