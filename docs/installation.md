@@ -1,6 +1,6 @@
-# INSTALL.md — openclaw-langgraph-bridge
+# Installation — openclaw-langgraph-bridge
 
-Per-bot install runbook for v0.11.0+. Takes a working OpenClaw gateway and adds the bridge plugin so the agent can dispatch LangGraph workflows and be woken on milestones / HITL / terminal events in-thread.
+Per-bot install runbook for v0.13.0+. Takes a working OpenClaw gateway and adds the bridge plugin so the agent can dispatch LangGraph workflows and be woken on milestones / HITL / terminal events in-thread.
 
 **Audience:** Bot operator with shell access to the bot host. Walks through fresh install on a bot that has never had the plugin before.
 
@@ -48,13 +48,27 @@ Verify each before starting. Don't proceed if any are missing.
    ```bash
    node --version  # v22.x.x
    ```
-4. **`gh` CLI authenticated** to a token with `repo` scope and read access to `ggettert/openclaw-langgraph-bridge`.
-5. **Reachable LangGraph server URL** — the URL the plugin will dispatch to. Note this; you'll need it for config (e.g. `http://langgraph.example.local:2024`).
+4. **`gh` CLI authenticated** to a token with `read:packages` and read access to `ggettert/openclaw-langgraph-bridge`.
+5. **Reachable LangGraph server URL** — the URL the plugin will dispatch to. Note this; you'll need it for config. See [Setting up a LangGraph server](#setting-up-a-langgraph-server) below if you don't have one yet.
 6. **A pre-shared `callbackToken`** — a string the LangGraph workflow will include as `Authorization: Bearer <token>` on inbound webhook POSTs. Generate one if you don't have it:
    ```bash
    openssl rand -hex 32
    ```
-7. **`callbackPublicBaseUrl`** (if you want webhooks, recommended) — the URL the LangGraph server will reach this bot at. Plugin appends `/plugins/openclaw-langgraph-bridge/events`. Find your bot's gateway public/private IP + port.
+7. **`callbackPublicBaseUrl`** (if you want webhooks, recommended) — the URL the LangGraph server will reach this bot at. Plugin appends `/plugins/openclaw-langgraph-bridge/events`. Find your gateway's IP + port and record it here.
+
+---
+
+## Setting up a LangGraph server
+
+The plugin requires a running LangGraph server that your bot host can reach over HTTP. You have two main options:
+
+**Option A — LangGraph Cloud (managed)**
+The quickest path to a running server. See the [LangGraph Cloud quick start](https://langchain-ai.github.io/langgraph/cloud/quick_start/) for setup instructions. After provisioning, set `langgraphBaseUrl` to the deployment URL provided in the LangGraph Platform dashboard.
+
+**Option B — Self-hosted with Aegra**
+[Aegra](https://docs.aegra.dev) is a self-hosted, drop-in-compatible LangGraph server. It uses the same LangGraph SDK and Python graph definitions, but runs on your own infrastructure without a LangSmith subscription. It adds Postgres for durable checkpointed state, Redis for job queues and SSE pub/sub, and OTLP observability integration. This is the recommended path if you want full infrastructure control or have data-residency requirements.
+
+Either option produces a URL of the form `http://<host>:<port>` — that becomes your `langgraphBaseUrl`.
 
 ---
 
@@ -69,9 +83,9 @@ Download the release tarball:
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
-gh release download v0.11.0 \
+gh release download v0.13.0 \
   --repo ggettert/openclaw-langgraph-bridge \
-  --pattern 'openclaw-langgraph-bridge-v0.11.0.tar.gz' \
+  --pattern 'openclaw-langgraph-bridge-v0.13.0.tar.gz' \
   --output /tmp/oclb.tgz
 tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
 rm /tmp/oclb.tgz
@@ -85,7 +99,7 @@ The tarball is **flat** — extracts `dist/`, `openclaw.plugin.json`, `package.j
 ls ~/.openclaw/extensions/openclaw-langgraph-bridge
 # Expected: dist/  openclaw.plugin.json  package.json  README.md
 grep '"version"' ~/.openclaw/extensions/openclaw-langgraph-bridge/openclaw.plugin.json
-# Expected: "version": "0.11.0",
+# Expected: "version": "0.13.0",
 ```
 
 Skip to **Step 3 (configure)** below.
@@ -125,9 +139,9 @@ Add or merge under the `plugins.entries.openclaw-langgraph-bridge` path:
       "openclaw-langgraph-bridge": {
         "enabled": true,
         "config": {
-          "langgraphBaseUrl": "http://<your-langgraph-base-url>:2024",
+          "langgraphBaseUrl": "http://langgraph.example.local:2024",
           "callbackToken": "REPLACE_WITH_YOUR_TOKEN",
-          "callbackPublicBaseUrl": "http://<this-bot-private-ip>:<gateway-port>",
+          "callbackPublicBaseUrl": "http://<your-bot-host>:<gateway-port>",
           "agentId": "main",
           "defaultTimeoutMs": 10000,
           "allowedWorkflows": []
@@ -201,7 +215,7 @@ Expected: the agent reports `langgraph_dispatch`, `langgraph_inspect`, `langgrap
 From the bot host:
 
 ```bash
-curl -sS -m 5 http://<langgraphBaseUrl>/ok
+curl -sS -m 5 http://langgraph.example.local:2024/ok
 # Expected: {"ok":true}
 ```
 
@@ -283,7 +297,7 @@ From an installed v0.11.0 to a future v0.12.0:
 ```bash
 # Download new tarball over existing extension dir (overwrites dist/, openclaw.plugin.json, package.json, README.md)
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
-gh release download vX.Y.Z --repo carpe/openclaw-langgraph-bridge \
+gh release download vX.Y.Z --repo ggettert/openclaw-langgraph-bridge \
   --pattern 'openclaw-langgraph-bridge-vX.Y.Z.tar.gz' \
   --output /tmp/oclb.tgz
 tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
@@ -347,4 +361,4 @@ Track the full list at: https://github.com/ggettert/openclaw-langgraph-bridge/is
 
 - Plugin source: https://github.com/ggettert/openclaw-langgraph-bridge
 - Skill for agents using these tools: `skills/langgraph-bridge/SKILL.md` (ships inside the install)
-- Architecture: `DESIGN.md` (ships inside the install) — phase history
+- Architecture: `docs/design.md` — phase history and implementation reference
