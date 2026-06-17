@@ -899,7 +899,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     //  see comment block above explaining the pivot to langgraph_resume tool)
 
     logger?.info?.(
-      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_inspect + langgraph_inspect_workflow + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
+      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_dispatch + langgraph_inspect + langgraph_inspect_workflow + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
     );
   },
 });
