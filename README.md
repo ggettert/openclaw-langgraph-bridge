@@ -4,7 +4,7 @@ OpenClaw plugin that bridges an OpenClaw agent (orchestrator) with one or more L
 
 The agent stays in control of the conversation. The plugin handles the wire protocol.
 
-> **Status:** Production-shape. v0.12.x ships five tools (`langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_list_workflows`, `langgraph_resume`), an SSE event subscriber for live milestone/HITL/terminal streaming, a webhook endpoint for LangGraph-initiated callbacks, and proactive Slack wake via the `openclaw agent` CLI primitive. See [DESIGN.md](./DESIGN.md) for architecture history and [AUDIT-2026-06-16.md](./AUDIT-2026-06-16.md) for the latest adversarial review.
+> **Status:** Production-shape. v0.12.x ships five tools (`langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_list_workflows`, `langgraph_resume`), an SSE event subscriber for live milestone/HITL/terminal streaming, a webhook endpoint for LangGraph-initiated callbacks, and proactive Slack wake via the `openclaw agent` CLI primitive. See [DESIGN.md](./DESIGN.md) for architecture history and the [open issues](https://github.com/ggettert/openclaw-langgraph-bridge/issues) for known limitations.
 >
 > **Channel compatibility:** Tested against Slack (DM + channel threads). Other OpenClaw channels (Discord, Telegram, WhatsApp, Signal, IRC, etc.) are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. The reply-hint surface (`src/webhook-handler.ts: buildReplyHint`) currently only emits a hint for Slack threaded channel sessions; non-Slack channels may have replies land at channel root instead of in-thread. See [INSTALL.md → Supported channels](./INSTALL.md#supported-channels) for the compatibility matrix and how to add support for a new channel.
 
@@ -60,7 +60,7 @@ These keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.
 
 | Key | Required | Default | Purpose |
 |---|---|---|---|
-| `langgraphBaseUrl` | ✓ | — | Base URL of the LangGraph server (e.g. `http://10.41.1.198:2024`) |
+| `langgraphBaseUrl` | ✓ | — | Base URL of the LangGraph server (e.g. `http://langgraph.example.local:2024`) |
 | `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs (`Authorization: Bearer <token>`) |
 | `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server POSTs events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
 | `agentId` | — | `"main"` | Agent id to wake when events fire |
@@ -69,7 +69,7 @@ These keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.
 
 ## Why this exists
 
-Carpe's V1 product-bot architecture wants Kit (and other agents) to *be* the orchestrator, not a thin trigger. LangGraph workflows do execution; OpenClaw agents drive decisions and conversation. This plugin is the seam that makes that work from inside an agent turn — no HTTP plumbing in the prompt, no session-key wrangling, no proxy hacks.
+This plugin's design goal is for the OpenClaw agent to *be* the orchestrator, not a thin trigger. LangGraph workflows do execution; OpenClaw agents drive decisions and conversation. This plugin is the seam that makes that work from inside an agent turn — no HTTP plumbing in the prompt, no session-key wrangling, no proxy hacks.
 
 ## License
 
