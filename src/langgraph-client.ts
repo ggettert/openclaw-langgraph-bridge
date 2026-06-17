@@ -4,6 +4,7 @@
  * The dev server we target exposes (verified against 0.10.0 at 10.41.1.198:2024):
  *   GET  /ok                          → liveness
  *   GET  /info                        → server metadata
+ *   GET  /assistants/{id}/schemas     → input/output/state/config schemas
  *   POST /assistants/search           → list assistants
  *   POST /threads                     → create a thread
  *   POST /threads/{thread_id}/runs    → start a run on a thread
@@ -47,6 +48,32 @@ export type LanggraphCreateRunResult = {
   raw: unknown;
 };
 
+/**
+ * Schema bundle returned by GET /assistants/{assistant_id}/schemas.
+ *
+ * All four fields are optional — LangGraph omits them when the workflow
+ * does not declare them explicitly. Typical shape (verified on the fleet
+ * POC workflow at 10.41.1.198:2024):
+ *
+ *   {
+ *     "input_schema":  { "title": "...", "type": "object", "properties": { ... } },
+ *     "output_schema": { "title": "...", "type": "object", ... },
+ *     "state_schema":  { "title": "...", "type": "object", "properties": { ... } },
+ *     "config_schema": { "title": "...", "type": "object", ... }
+ *   }
+ *
+ * Use input_schema to validate the shape you pass to langgraph_dispatch.
+ * LangGraph silently drops unknown keys at graph entry — mismatched keys
+ * cause downstream node KeyErrors rather than a clean error at dispatch.
+ */
+export type AssistantSchemas = {
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  state_schema?: Record<string, unknown>;
+  config_schema?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 export class LanggraphHttpError extends Error {
   constructor(
     message: string,
@@ -79,6 +106,27 @@ export class LanggraphClient {
   async info(): Promise<Record<string, unknown>> {
     const res = await this.fetch("/info", { method: "GET" });
     return (await res.json()) as Record<string, unknown>;
+  }
+
+  /**
+   * Fetch the schema bundle for a workflow / assistant.
+   *
+   * GET /assistants/{assistant_id}/schemas
+   *
+   * Returns the JSON-Schema definitions the LangGraph server publishes for
+   * the workflow's input, output, state, and config surfaces. Call this
+   * BEFORE dispatching any workflow whose input shape you don't already
+   * know — LangGraph silently drops unknown keys at graph entry, causing
+   * downstream nodes to KeyError mid-run.
+   *
+   * @throws {LanggraphHttpError} with status 404 when the workflow is unknown.
+   * @throws {LanggraphHttpError} with status 5xx on server errors.
+   * @throws {Error} on network failure or timeout.
+   */
+  async getAssistantSchemas(workflowId: string): Promise<AssistantSchemas> {
+    const path = `/assistants/${encodeURIComponent(workflowId)}/schemas`;
+    const res = await this.fetch(path, { method: "GET" });
+    return (await res.json()) as AssistantSchemas;
   }
 
   async createThread(metadata?: Record<string, unknown>): Promise<string> {

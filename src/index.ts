@@ -204,7 +204,83 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
       { name: "langgraph_inspect" },
     );
 
-    // ---- 1b. Tool: langgraph_dispatch --------------------------------------
+    // ---- 1b. Tool: langgraph_inspect_workflow ------------------------------
+    // Fetch the JSON-Schema shapes a workflow expects as input/output/state.
+    // Agents MUST call this before dispatching any workflow whose input shape
+    // they don't already know; LangGraph silently drops unknown keys and
+    // downstream nodes KeyError mid-run (root cause of BINGO-9 / BINGO-11).
+    api.registerTool(
+      (_toolContext) => {
+        const baseUrl = config.langgraphBaseUrl;
+        const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+        const allowed = config.allowedWorkflows;
+
+        return {
+          name: "langgraph_inspect_workflow",
+          label: "LangGraph Inspect Workflow",
+          description:
+            "Inspect the schema(s) of a LangGraph workflow before dispatching it. Returns input_schema / output_schema / state_schema / config_schema as published by the LangGraph server. Call this BEFORE dispatching any workflow whose input shape you don't already know — LangGraph silently drops unknown keys and downstream nodes will KeyError mid-run if you guess wrong.",
+          parameters: Type.Object({
+            workflow_id: Type.String({
+              description:
+                "LangGraph assistant id (UUID) or graph id (e.g. 'fleet'). Must match an assistant registered on the LangGraph server.",
+            }),
+          }),
+          execute: async (_toolCallId: string, paramsUnknown: unknown) => {
+            const params = paramsUnknown as { workflow_id: string };
+            const workflowId = params.workflow_id;
+
+            if (!baseUrl) {
+              return jsonResult({
+                status: "error" as const,
+                reason: "missing_langgraph_base_url",
+                message:
+                  "langgraph-bridge is not configured: set `plugins.entries.openclaw-langgraph-bridge.config.langgraphBaseUrl`.",
+              });
+            }
+
+            if (allowed && allowed.length > 0 && !allowed.includes(workflowId)) {
+              return jsonResult({
+                status: "error" as const,
+                reason: "workflow_not_allowed",
+                message: `Workflow ${workflowId} is not in allowedWorkflows.`,
+                workflow_id: workflowId,
+              });
+            }
+
+            const client = new LanggraphClient({ baseUrl, timeoutMs });
+            try {
+              const schemas = await client.getAssistantSchemas(workflowId);
+              return jsonResult({
+                status: "ok" as const,
+                workflow_id: workflowId,
+                schemas,
+              });
+            } catch (err: unknown) {
+              if (err instanceof LanggraphHttpError && err.status === 404) {
+                return jsonResult({
+                  status: "error" as const,
+                  reason: "workflow_not_found",
+                  workflow_id: workflowId,
+                  message: `Workflow '${workflowId}' not found on the LangGraph server (404).`,
+                });
+              }
+              const message =
+                err instanceof Error ? err.message : String(err);
+              return jsonResult({
+                status: "error" as const,
+                reason: "request_failed",
+                workflow_id: workflowId,
+                message,
+              });
+            }
+          },
+        };
+      },
+      { name: "langgraph_inspect_workflow" },
+    );
+
+    // ---- 1c. Tool: langgraph_dispatch --------------------------------------
     api.registerTool(
       (toolContext) => {
         const sessionKey = toolContext.sessionKey;
@@ -823,7 +899,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     //  see comment block above explaining the pivot to langgraph_resume tool)
 
     logger?.info?.(
-      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_inspect + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
+      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_dispatch + langgraph_inspect + langgraph_inspect_workflow + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
     );
   },
 });
