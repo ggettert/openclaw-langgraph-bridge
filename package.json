@@ -4,7 +4,7 @@
   "description": "OpenClaw plugin bridging Kit-as-orchestrator with LangGraph workflows. Tools: langgraph_dispatch, langgraph_inspect. Webhook routes events back into Kit's session via the `openclaw agent` CLI wake primitive (Phase 4). Per-Slack-thread isolation via managedFlows.",
   "type": "module",
   "license": "Apache-2.0",
-  "author": "Carpe Data",
+  "author": "Grace Gettert",
   "repository": {
     "type": "git",
     "url": "https://github.com/ggettert/openclaw-langgraph-bridge.git"
