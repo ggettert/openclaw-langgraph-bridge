@@ -49,6 +49,32 @@ export type LanggraphCreateRunResult = {
 };
 
 /**
+ * A single assistant record returned by POST /assistants/search.
+ *
+ * Verified shape (LangGraph Server 0.10.0, 10.41.1.198:2024):
+ *
+ *   {
+ *     "assistant_id": "<uuid>",
+ *     "graph_id": "fleet",
+ *     "name": "Fleet Workflow",
+ *     "description": "...",
+ *     "metadata": {},
+ *     "config": {}
+ *   }
+ *
+ * `description` may be null if the workflow author did not set one.
+ */
+export type LanggraphAssistant = {
+  assistant_id: string;
+  graph_id: string;
+  name: string;
+  description: string | null;
+  metadata?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+/**
  * Schema bundle returned by GET /assistants/{assistant_id}/schemas.
  *
  * All four fields are optional — LangGraph omits them when the workflow
@@ -127,6 +153,30 @@ export class LanggraphClient {
     const path = `/assistants/${encodeURIComponent(workflowId)}/schemas`;
     const res = await this.fetch(path, { method: "GET" });
     return (await res.json()) as AssistantSchemas;
+  }
+
+  /**
+   * Search / list assistants registered on the LangGraph server.
+   *
+   * POST /assistants/search { "limit": <n> }
+   *
+   * Returns an array of assistant objects. Each item has at minimum:
+   *   - assistant_id {string}       — stable UUID for the assistant
+   *   - graph_id    {string}        — graph/workflow identifier (e.g. "fleet")
+   *   - name        {string}        — human-readable name
+   *   - description {string|null}   — optional description (null when not set)
+   *
+   * @param limit  Max results to return (default 100). LangGraph will cap this
+   *               at its own server-side limit if you ask for more.
+   * @throws {LanggraphHttpError} on 4xx/5xx server errors.
+   * @throws {Error} on network failure or timeout.
+   */
+  async searchAssistants(limit = 100): Promise<LanggraphAssistant[]> {
+    const res = await this.fetch("/assistants/search", {
+      method: "POST",
+      body: { limit },
+    });
+    return (await res.json()) as LanggraphAssistant[];
   }
 
   async createThread(metadata?: Record<string, unknown>): Promise<string> {
