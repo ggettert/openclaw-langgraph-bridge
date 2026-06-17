@@ -341,7 +341,7 @@ Fixed in v0.11.2 (was open at v0.11.0/v0.11.1):
 - ~~**#14**: Release tarball was missing `node_modules` — silent plugin load failure on install.~~ Fixed: release tarball now bundles runtime deps via `npm ci --omit=dev`.
 - ~~**#10 (M5)**: SSE + webhook double-terminal causes LangGraph retry storm.~~ Fixed: `processEvent` is now state-aware; ignores all event kinds for terminated flows.
 - ~~**#16**: Stale `hitl` after `graph:end` flips flow status `succeeded → waiting`.~~ Same fix as #10.
-- ~~**#13**: Release tarball missing INSTALL.md / AUDIT / DESIGN / skills/.~~ Fixed in v0.11.2 tarball.
+- ~~**#13**: Release tarball missing INSTALL.md / DESIGN / skills/.~~ Fixed in v0.11.2 tarball.
 
 Still open at v0.12.0 — each will bite eventually if not avoided:
 
@@ -360,5 +360,4 @@ Track the full list at: https://github.com/ggettert/openclaw-langgraph-bridge/is
 
 - Plugin source: https://github.com/ggettert/openclaw-langgraph-bridge (canonical), mirrored at https://github.com/carpe/openclaw-langgraph-bridge
 - Skill for agents using these tools: `skills/langgraph-bridge/SKILL.md` (ships inside the install)
-- Audit: `AUDIT-2026-06-16.md` (ships inside the install) — adversarial review of v0.11.0
 - Architecture: `DESIGN.md` (ships inside the install) — phase history
