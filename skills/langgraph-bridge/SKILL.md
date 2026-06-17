@@ -1,6 +1,6 @@
 ---
 name: langgraph-bridge
-description: "Drive LangGraph workflows from an agent turn using langgraph_dispatch / langgraph_inspect / langgraph_resume. Agent yields after dispatch and is woken on milestones, HITL gates, and terminal events."
+description: "Drive LangGraph workflows from an agent turn using langgraph_dispatch / langgraph_inspect / langgraph_inspect_workflow / langgraph_list_workflows / langgraph_resume. Agent yields after dispatch and is woken on milestones, HITL gates, and terminal events. Use list_workflows to discover what's available, inspect_workflow to get a workflow's input schema, then dispatch."
 argument-hint: "workflow id or graph id, plus structured input matching the target workflow's state schema"
 ---
 
@@ -10,7 +10,7 @@ Use this skill whenever you need to dispatch a durable LangGraph workflow from i
 
 Plugin: `openclaw-langgraph-bridge` v0.12.0+  
 Repo: github.com/ggettert/openclaw-langgraph-bridge  
-Four tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_resume`
+Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_list_workflows`, `langgraph_resume`
 
 ---
 
@@ -191,6 +191,60 @@ If `allowedWorkflows` is configured and the `workflow_id` is not in it, the tool
 |---|---|---|
 | `workflow_not_allowed` | `workflow_id` is not in the configured allowlist | Check `allowedWorkflows` config; use an allowed id |
 | `workflow_not_found` | LangGraph server returned 404 for this assistant | Verify the workflow id is correct and the server is running |
+| `request_failed` | Network error, timeout, or server 5xx | Retry; if persistent, check LangGraph server health |
+| `missing_langgraph_base_url` | Plugin misconfigured | Set `langgraphBaseUrl` in plugin config |
+
+---
+
+### `langgraph_list_workflows`
+
+List every workflow (assistant) available on the configured LangGraph server. Call this when you need to *discover* what workflows you can dispatch — you should not need to know workflow ids out-of-band.
+
+**Parameters**
+
+*No parameters.*
+
+**Returns** (on success)
+
+```json
+{
+  "status": "ok",
+  "allowlist_active": true,
+  "workflows": [
+    {
+      "assistant_id": "6d5d4365-62fd-59e2-807b-539d8f85d26e",
+      "graph_id": "fleet",
+      "name": "Fleet Workflow",
+      "description": "Runs the fleet orchestration pipeline",
+      "allowed": true
+    },
+    {
+      "assistant_id": "aabbccdd-0000-1111-2222-333344445555",
+      "graph_id": "triage",
+      "name": "Triage Agent",
+      "description": null,
+      "allowed": false
+    }
+  ]
+}
+```
+
+Key fields:
+- `workflows[].allowed` — whether this workflow passes the plugin's `allowedWorkflows` config check. If `false`, dispatching or inspecting it will fail with `workflow_not_allowed`.
+- `allowlist_active` — `true` when `allowedWorkflows` config is set and non-empty. When `false`, every `allowed: true` is a default — there is no allowlist filtering at all.
+
+**When to use**
+
+- At the start of working with a new bot / new LangGraph deployment: "what's available here?"
+- When the user asks for a workflow by name and you want to confirm the id is correct.
+- When you suspect the allowlist is blocking you (the response will show which workflows are reachable).
+
+**Pattern**: list workflows → pick the right `graph_id` or `assistant_id` → `langgraph_inspect_workflow` to learn its input shape → `langgraph_dispatch` with the correct input.
+
+**Error reasons**
+
+| reason | meaning | action |
+|---|---|---|
 | `request_failed` | Network error, timeout, or server 5xx | Retry; if persistent, check LangGraph server health |
 | `missing_langgraph_base_url` | Plugin misconfigured | Set `langgraphBaseUrl` in plugin config |
 
