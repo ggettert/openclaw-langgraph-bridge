@@ -419,6 +419,56 @@ Do not fall back to guessing the schema if inspection fails — a blind dispatch
 
 ---
 
+## Reacting to phase events (`<phase>:started` / `<phase>:finished`)
+
+Workflows like `fleet` emit milestone wakes for *both* the start and the completion of each long-running phase. The bridge plugin translates fleet's native vocabulary into milestone events the agent wakes on:
+
+| Event you receive | When it fires | What to post in Slack |
+|---|---|---|
+| `[langgraph:milestone] designer:started` | Workflow has begun authoring the tech spec | "📐 Designer working on the tech spec for `<ticket_id>`." |
+| `[langgraph:milestone] designer:finished` | Spec ready; design gate next | "Spec landed at `<tech_spec_path>`." |
+| `[langgraph:milestone] coder:started` | Coder agent dispatched against the spec | "🔨 Coder picked up `<ticket_id>`, writing code now." |
+| `[langgraph:milestone] coder:finished` | PR drafted | "✅ Coder pushed PR `<pr_url>`." |
+| `[langgraph:milestone] reviewer:started` | Reviewer agent dispatched against the PR | "👀 Reviewer started reviewing `<pr_url>`." |
+| `[langgraph:milestone] reviewer:finished` | Reviewer verdict posted to the PR | "Review complete: verdict `<review_verdict>`." |
+| `[langgraph:milestone] merge:started` | Merge gate approved, executing the merge | "🚀 Merging `<pr_url>`." |
+| `[langgraph:milestone] merge:finished` | Merge landed | "✅ Merged `<pr_url>`." |
+
+*The user wants to see progress, not just outcomes.* A 2-3 minute silence between `coder:finished` and `reviewer:finished` reads as the workflow being stuck. Surface the `reviewer:started` ack so the user knows the next phase is actively running.
+
+### Pattern
+
+```
+for each wake event you receive:
+  if event.title matches "<phase>:started":
+    post a short "… starting" message to the thread
+  elif event.title matches "<phase>:finished":
+    post the outcome (PR url, verdict, merge link)
+  elif event.kind == "hitl":
+    surface the prompt to the human and wait for their reply
+  elif event.kind == "terminal":
+    post the final summary
+```
+
+### What NOT to do
+
+- **Don't post a verdict on `reviewer:started`.** The reviewer hasn't run yet — there is no verdict. The verdict only exists in the `reviewer:finished` event's `review_verdict` field.
+- **Don't skip `:started` events.** They're cheap (a one-line ack), they reduce user anxiety, and they make the next 1-3 minutes of silence interpretable.
+- **Don't fire long messages on every `:started`.** One emoji + one line. Save the detailed summary for the corresponding `:finished` event.
+
+### Source events
+
+The bridge plugin translates fleet's native `{phase, event, ...}` custom-stream emissions into Mode B milestone events. The available `<phase>` names today (verified against `ggettert/aidlc-fleet-poc/graph/workflow.py`):
+
+- `designer` (started, finished)
+- `coder` (started, finished)
+- `reviewer` (started, finished)
+- `merge` (started, finished, blocked)
+
+A workflow author whose graph emits a different vocabulary may produce different event titles. Use `langgraph_inspect_workflow` to learn the workflow's contract; the schemas show state fields but not custom-event vocabulary, so worst case the agent should observe a few runs and learn the pattern.
+
+---
+
 ## Failure modes (from real history)
 
 ### KeyError: 'spec_path' (BINGO-9, BINGO-11)
