@@ -1,6 +1,6 @@
 # openclaw-langgraph-bridge — Design
 
-This is the implementation reference: the final design that landed, the phase plan for building it, and the rationale for key choices documented inline.
+This is the implementation reference. It covers the design that was landed and the phase history for building it.
 
 ## Goal
 
