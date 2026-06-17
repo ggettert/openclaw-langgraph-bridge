@@ -16,7 +16,7 @@ Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workfl
 
 ## When to use
 
-- Driving a multi-step, durable LangGraph workflow (e.g. the `fleet` coding-agent workflow) — _The example workflow used throughout this skill is named `fleet`; replace with your workflow name._ that runs for minutes or hours and will pause at HITL gates.
+- Driving a multi-step, durable LangGraph workflow (e.g. the `fleet` coding-agent workflow) that runs for minutes or hours and will pause at HITL gates. _(The example workflow used throughout this skill is named `fleet`; replace with your workflow name.)_
 - When the agent needs to be woken in the originating Slack thread or DM when the workflow posts a milestone, decision, or terminal event.
 - When the human's approval ("approve", "block_revise: …") needs to be forwarded back into a running workflow at an interrupt point.
 
@@ -541,7 +541,7 @@ double-firing `langgraph_resume`. Closed by #10 (M5) and #16 in v0.11.2.
 
 **Root cause:** The LangGraph server is down, overloaded, or the route is blocked.
 
-**Fix:** Bounce the POC EC2 instance and retry. If the connection times out (vs. refused), the host is up but the port is not listening — restart the `langgraph dev` process on the POC.
+**Fix:** Restart your LangGraph server and retry. If the connection times out (vs. refused), the host is up but the port is not listening — check routing and confirm the port is listening (e.g. `lsof -i :<port>` or `ss -tlnp | grep <port>`).
 
 ### Wake reply lands at channel root, not in thread (pre-v0.11.0)
 

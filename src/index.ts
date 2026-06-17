@@ -978,7 +978,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
  *     unchanged so workflows whose interrupts expect raw payloads still work
  *
  * Aliases match the typical merge_gate / design_gate parser shape used in
- * langgraph workflows (see <your-org>/your-langgraph-workflows graph/workflow.py).
+ * langgraph workflows (see `<your-org>/your-langgraph-workflows` `graph/workflow.py`).
  */
 export function normalizeResumePayload(payload: unknown): unknown {
   if (typeof payload !== "string") return payload;

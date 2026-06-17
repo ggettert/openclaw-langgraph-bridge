@@ -48,7 +48,7 @@ Verify each before starting. Don't proceed if any are missing.
    ```bash
    node --version  # v22.x.x
    ```
-4. **`gh` CLI authenticated** to a token with `read:packages` and read access to `ggettert/openclaw-langgraph-bridge`.
+4. **`gh` CLI authenticated** to a token with `repo` scope and read access to `ggettert/openclaw-langgraph-bridge`.
 5. **Reachable LangGraph server URL** — the URL the plugin will dispatch to. Note this; you'll need it for config (e.g. `http://langgraph.example.local:2024`).
 6. **A pre-shared `callbackToken`** — a string the LangGraph workflow will include as `Authorization: Bearer <token>` on inbound webhook POSTs. Generate one if you don't have it:
    ```bash
@@ -64,7 +64,7 @@ This is the production path. Skip Path B unless you specifically want to build f
 
 ### A1. Download and extract
 
-Choose ONE source — they're built from the same commit:
+Download the release tarball:
 
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge

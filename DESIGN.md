@@ -1,6 +1,6 @@
 # openclaw-langgraph-bridge — Design
 
-This is the implementation reference. This doc covers every option considered and rejected, every adversarial review iteration, and the phase plan for building it. It is **just** the design that was landed — rationale is documented inline.
+This is the implementation reference: the final design that landed, the phase plan for building it, and the rationale for key choices documented inline.
 
 ## Goal
 
