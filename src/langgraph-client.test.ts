@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LanggraphClient, LanggraphHttpError } from "./langgraph-client.js";
+import { LanggraphClient, LanggraphHttpError, type LanggraphAssistant } from "./langgraph-client.js";
 
 describe("LanggraphClient", () => {
   const originalFetch = globalThis.fetch;
@@ -161,6 +161,95 @@ describe("LanggraphClient", () => {
       });
       const client = new LanggraphClient({ baseUrl: "http://lg", timeoutMs: 50 });
       const promise = client.getAssistantSchemas("fleet");
+      vi.advanceTimersByTime(51);
+      await expect(promise).rejects.toThrow();
+    });
+  });
+
+  describe("searchAssistants", () => {
+    const mockAssistants: LanggraphAssistant[] = [
+      {
+        assistant_id: "6d5d4365-62fd-59e2-807b-539d8f85d26e",
+        graph_id: "fleet",
+        name: "Fleet Workflow",
+        description: "Runs the fleet orchestration pipeline",
+        metadata: {},
+        config: {},
+      },
+      {
+        assistant_id: "aabbccdd-0000-1111-2222-333344445555",
+        graph_id: "triage",
+        name: "Triage Agent",
+        description: null,
+        metadata: {},
+      },
+    ];
+
+    it("returns parsed array of assistants", async () => {
+      mockFetch(async () =>
+        new Response(JSON.stringify(mockAssistants), { status: 200 }),
+      );
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      const result = await client.searchAssistants();
+      expect(result).toEqual(mockAssistants);
+      expect(result).toHaveLength(2);
+      expect(result[0].assistant_id).toBe("6d5d4365-62fd-59e2-807b-539d8f85d26e");
+      expect(result[1].description).toBeNull();
+    });
+
+    it("sends POST to /assistants/search with correct body including limit", async () => {
+      let captured: { url?: string; method?: string; body?: unknown } = {};
+      mockFetch(async (input, init) => {
+        captured.url = typeof input === "string" ? input : (input as Request).url;
+        captured.method = init?.method;
+        captured.body = init?.body ? JSON.parse(init.body as string) : undefined;
+        return new Response(JSON.stringify([]), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      await client.searchAssistants(42);
+      expect(captured.url).toBe("http://lg/assistants/search");
+      expect(captured.method).toBe("POST");
+      expect(captured.body).toEqual({ limit: 42 });
+    });
+
+    it("uses default limit of 100 when not specified", async () => {
+      let capturedBody: unknown;
+      mockFetch(async (_input, init) => {
+        capturedBody = init?.body ? JSON.parse(init.body as string) : undefined;
+        return new Response(JSON.stringify([]), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      await client.searchAssistants();
+      expect(capturedBody).toEqual({ limit: 100 });
+    });
+
+    it("throws LanggraphHttpError on 5xx", async () => {
+      mockFetch(async () =>
+        new Response("Internal Server Error", {
+          status: 500,
+          statusText: "Internal Server Error",
+        }),
+      );
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      const err = await client.searchAssistants().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LanggraphHttpError);
+      expect((err as LanggraphHttpError).status).toBe(500);
+    });
+
+    it("aborts and rejects on timeout", async () => {
+      mockFetch(async (_input, init) => {
+        await new Promise<void>((_, reject) => {
+          const signal = (init as RequestInit).signal;
+          if (signal) {
+            signal.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }
+        });
+        return new Response(null, { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg", timeoutMs: 50 });
+      const promise = client.searchAssistants();
       vi.advanceTimersByTime(51);
       await expect(promise).rejects.toThrow();
     });

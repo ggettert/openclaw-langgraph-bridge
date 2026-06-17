@@ -280,7 +280,70 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
       { name: "langgraph_inspect_workflow" },
     );
 
-    // ---- 1c. Tool: langgraph_dispatch --------------------------------------
+    // ---- 1c. Tool: langgraph_list_workflows --------------------------------
+    // Discovery tool: ask the LangGraph server what workflows (assistants)
+    // are available. Returns each with an `allowed` annotation based on
+    // the plugin's `allowedWorkflows` config so agents can see what exists
+    // vs. what they can actually dispatch.
+    api.registerTool(
+      (_toolContext) => {
+        const baseUrl = config.langgraphBaseUrl;
+        const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+        const allowedWorkflows = config.allowedWorkflows;
+
+        return {
+          name: "langgraph_list_workflows",
+          label: "LangGraph List Workflows",
+          description:
+            "List the LangGraph workflows available on this server. Returns each workflow's `assistant_id`, `graph_id`, `name`, and `description`. Use this to discover what workflows you can dispatch. Workflows blocked by the plugin's `allowedWorkflows` config are still listed but marked as `allowed: false` so you can see what exists vs. what you can actually call.",
+          parameters: Type.Object({}),
+          execute: async (_toolCallId: string, _paramsUnknown: unknown) => {
+            if (!baseUrl) {
+              return jsonResult({
+                status: "error" as const,
+                reason: "missing_langgraph_base_url",
+                message:
+                  "langgraph-bridge is not configured: set `plugins.entries.openclaw-langgraph-bridge.config.langgraphBaseUrl`.",
+              });
+            }
+
+            const allowlistActive =
+              Array.isArray(allowedWorkflows) && allowedWorkflows.length > 0;
+
+            const client = new LanggraphClient({ baseUrl, timeoutMs });
+            try {
+              const assistants = await client.searchAssistants(100);
+              const workflows = assistants.map((a) => ({
+                assistant_id: a.assistant_id,
+                graph_id: a.graph_id,
+                name: a.name,
+                description: a.description,
+                allowed: allowlistActive
+                  ? (allowedWorkflows!.includes(a.assistant_id) ||
+                      allowedWorkflows!.includes(a.graph_id))
+                  : true,
+              }));
+              return jsonResult({
+                status: "ok" as const,
+                workflows,
+                allowlist_active: allowlistActive,
+              });
+            } catch (err: unknown) {
+              const message =
+                err instanceof Error ? err.message : String(err);
+              return jsonResult({
+                status: "error" as const,
+                reason: "request_failed",
+                message,
+              });
+            }
+          },
+        };
+      },
+      { name: "langgraph_list_workflows" },
+    );
+
+    // ---- 1d. Tool: langgraph_dispatch --------------------------------------
     api.registerTool(
       (toolContext) => {
         const sessionKey = toolContext.sessionKey;
@@ -899,7 +962,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     //  see comment block above explaining the pivot to langgraph_resume tool)
 
     logger?.info?.(
-      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_dispatch + langgraph_inspect + langgraph_inspect_workflow + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
+      `openclaw-langgraph-bridge: registered POST ${WEBHOOK_PATH} + langgraph_dispatch + langgraph_inspect + langgraph_inspect_workflow + langgraph_list_workflows + langgraph_resume tools (token configured: ${Boolean(config.callbackToken)})`,
     );
   },
 });
