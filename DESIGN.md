@@ -1,6 +1,6 @@
 # openclaw-langgraph-bridge — Design
 
-This is the implementation reference. The architectural history (every option considered and rejected, every adversarial review iteration) lives in the carpe `aidlc-fleet-poc` palace drawer. This doc is **just** the design that was landed and the phase plan for building it.
+This is the implementation reference. This doc covers every option considered and rejected, every adversarial review iteration, and the phase plan for building it. It is **just** the design that was landed — rationale is documented inline.
 
 ## Goal
 
@@ -81,7 +81,7 @@ Wire `langgraph_dispatch` to actual `managedFlows` + LangGraph HTTP:
 - [x] `createManaged` writes the flow with workflow metadata in `stateJson`
 - [x] Minimal HTTP client (`src/langgraph-client.ts`) for `/ok`, `/info`, `POST /threads`, `POST /threads/{tid}/runs`
 - [x] Tool returns `{flow_id, langgraph_thread_id, langgraph_run_id, session_key}` plus run metadata carrying `openclaw_flow_id` + `openclaw_session_key` for Phase 2 webhook routing
-- [x] Standalone live smoke (`npm run smoke`) — verified end-to-end against 10.41.1.198:2024 (LangGraph 0.10.0, assistant `fleet`)
+- [x] Standalone live smoke (`npm run smoke`) — verified end-to-end against a live LangGraph server (LangGraph 0.10.0, assistant `fleet`)
 - [ ] **In-gateway smoke**: install on this gateway, dispatch from a Slack thread, confirm the agent gets `{flow_id, run_id, thread_id}` back and a managed flow appears in `openclaw tasks`
 
 ### Phase 2 — webhook + classification

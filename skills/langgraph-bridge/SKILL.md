@@ -16,7 +16,7 @@ Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workfl
 
 ## When to use
 
-- Driving a multi-step, durable LangGraph workflow (e.g. the `fleet` coding-agent workflow) that runs for minutes or hours and will pause at HITL gates.
+- Driving a multi-step, durable LangGraph workflow (e.g. the `fleet` coding-agent workflow) — _The example workflow used throughout this skill is named `fleet`; replace with your workflow name._ that runs for minutes or hours and will pause at HITL gates.
 - When the agent needs to be woken in the originating Slack thread or DM when the workflow posts a milestone, decision, or terminal event.
 - When the human's approval ("approve", "block_revise: …") needs to be forwarded back into a running workflow at an interrupt point.
 
@@ -83,10 +83,10 @@ Dispatch a new workflow run. Returns synchronously once LangGraph has accepted t
 **`fleet` workflow — required input keys**
 
 ```
-ticket_id   string   e.g. "BINGO-9"
-repo        string   e.g. "ggettert/aidlc-sandbox"
+ticket_id   string   e.g. "<ticket-id>"
+repo        string   e.g. "<your-org>/your-target-repo"
 spec_path   string   path to an existing spec file ALREADY committed to the repo
-                     e.g. "feature/BINGO-9/tech-spec.md"
+                     e.g. "feature/<ticket-id>/tech-spec.md"
                      ← NOT free-text; NOT a ticket title; NOT a description
 ```
 
@@ -101,14 +101,14 @@ The `spec_path` MUST exist in the repo before dispatch. The workflow's `/build` 
 #         (a local commit is not enough — the workflow reads it from the remote).
 #         A pushed feature branch is sufficient — the spec does NOT need to be on
 #         `main` and does NOT need a merged PR. fleet resolves spec_path from the
-#         repo directly. (Verified BINGO-13: spec read fine off the feature branch.)
+#         repo directly. (Spec reads fine off the feature branch — only the committed file path matters.)
 # Step 2: dispatch
 result = langgraph_dispatch(
     workflow="fleet",
     input={
-        "ticket_id": "BINGO-11",
-        "repo": "ggettert/aidlc-sandbox",
-        "spec_path": "feature/BINGO-11/tech-spec.md"
+        "ticket_id": "<ticket-id>",
+        "repo": "<your-org>/your-target-repo",
+        "spec_path": "feature/<ticket-id>/tech-spec.md"
     }
 )
 # result = {
@@ -131,10 +131,10 @@ sessions_yield(message="Dispatched fleet run. Will report back on events.")
 langgraph_dispatch(
     workflow="fleet",
     input={
-        "ticket_id": "BINGO-9",
+        "ticket_id": "<ticket-id>",
         "ticket_title": "Fix the login bug",    # ← dropped silently
         "ticket_description": "Users can't log in",  # ← dropped silently
-        "repo": "ggettert/aidlc-sandbox"
+        "repo": "<your-org>/your-target-repo"
         # spec_path missing entirely
     }
 )
@@ -391,9 +391,9 @@ Response:
 langgraph_dispatch(
     workflow="fleet",
     input={
-        "ticket_id": "BINGO-22",
+        "ticket_id": "<ticket-id>",
         "repo":      "<your-repo>",
-        "spec_path": "feature/BINGO-22/tech-spec.md"
+        "spec_path": "feature/<ticket-id>/tech-spec.md"
     }
 )
 ```
@@ -458,7 +458,7 @@ for each wake event you receive:
 
 ### Source events
 
-The bridge plugin translates fleet's native `{phase, event, ...}` custom-stream emissions into Mode B milestone events. The available `<phase>` names today (verified against `ggettert/aidlc-fleet-poc/graph/workflow.py`):
+The bridge plugin translates fleet's native `{phase, event, ...}` custom-stream emissions into Mode B milestone events. The available `<phase>` names today (verified against the `fleet` workflow implementation):
 
 - `designer` (started, finished)
 - `coder` (started, finished)
@@ -471,14 +471,14 @@ A workflow author whose graph emits a different vocabulary may produce different
 
 ## Failure modes (from real history)
 
-### KeyError: 'spec_path' (BINGO-9, BINGO-11)
+### KeyError: 'spec_path'
 
 **Symptom:** dispatch returns `status: "accepted"`, milestone events fire briefly, then workflow fails with a terminal event containing `KeyError: 'spec_path'` (or another missing field).
 
 **Root cause:** `input` passed to dispatch didn't include the required `spec_path` key. LangGraph schema enforcement silently drops unknown keys; the workflow state was populated with only the keys that matched, so downstream nodes that read `spec_path` raised `KeyError`.
 
 **Fix:**
-1. Create the spec file (e.g. `feature/BINGO-11/tech-spec.md`) in the repo.
+1. Create the spec file (e.g. `feature/<ticket-id>/tech-spec.md`) in the repo.
 2. Commit and **push** it. A pushed feature branch is enough — the spec does NOT
    need to be merged to `main` and does NOT require a PR. (Don't burn a merge
    gate just to land the spec; fleet reads `spec_path` straight from the repo.)
@@ -498,11 +498,11 @@ A workflow author whose graph emits a different vocabulary may produce different
 
 **Symptom:** `langgraph_resume` returns `status: "resumed"`, but the agent is never woken again — even though the workflow continued running, passed through more milestones, and reached a terminal.
 
-**Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake. BINGO-9 was the dogfood run that caught this — the merge landed on LangGraph but Kit never learned the terminal had fired.
+**Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake. This was the dogfood scenario that caught this — the merge landed on LangGraph but the agent was never woken about the terminal.
 
 **Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch. If you are seeing this on a patched version, check that the gateway is actually running the updated plugin binary (`grep -c "resume_run_id" dist/index.js`).
 
-### Post-resume frame replay / out-of-order events (BINGO-13)
+### Post-resume frame replay / out-of-order events
 
 **Symptom:** after a successful `langgraph_resume` (e.g. approving a `merge_gate`),
 the session is woken by a flurry of trailing frames that arrive *out of order* and
@@ -539,7 +539,7 @@ double-firing `langgraph_resume`. Closed by #10 (M5) and #16 in v0.11.2.
 
 **Symptom:** `langgraph_dispatch` returns `status: "error"` with a message like `ETIMEDOUT` or `connect ECONNREFUSED`. Or the call hangs until the 10 s client timeout.
 
-**Root cause:** The LangGraph dev server (POC EC2, typically `http://10.41.1.198:2024`) is down, overloaded, or the route is blocked.
+**Root cause:** The LangGraph server is down, overloaded, or the route is blocked.
 
 **Fix:** Bounce the POC EC2 instance and retry. If the connection times out (vs. refused), the host is up but the port is not listening — restart the `langgraph dev` process on the POC.
 
@@ -570,13 +570,13 @@ Use direct HTTP calls when:
 
 **Check thread state:**
 ```bash
-curl -s http://10.41.1.198:2024/threads/<langgraph_thread_id>/state \
+curl -s http://langgraph.example.local:2024/threads/<langgraph_thread_id>/state \
   | jq '{status: .status, next: .next, values_keys: (.values // {} | keys)}'
 ```
 
 **Resume via direct API (when plugin resume fails):**
 ```bash
-curl -s -X POST http://10.41.1.198:2024/threads/<tid>/runs \
+curl -s -X POST http://langgraph.example.local:2024/threads/<tid>/runs \
   -H 'Content-Type: application/json' \
   -d '{
     "assistant_id": "fleet",
@@ -605,7 +605,7 @@ These live under `plugins.entries.openclaw-langgraph-bridge.config`. In normal o
 
 | key | default | purpose |
 |---|---|---|
-| `langgraphBaseUrl` | (required) | Base URL of the LangGraph server, e.g. `http://10.41.1.198:2024` |
+| `langgraphBaseUrl` | (required) | Base URL of the LangGraph server, e.g. `http://langgraph.example.local:2024` |
 | `callbackToken` | (required) | Bearer token for inbound webhook authentication |
 | `callbackPublicBaseUrl` | (optional) | Public base URL the LangGraph server POSTs events to (appended with `/plugins/openclaw-langgraph-bridge/events`) |
 | `agentId` | `"main"` | Agent id to wake. Only change if you have multiple named agents on one gateway |
@@ -620,4 +620,4 @@ These live under `plugins.entries.openclaw-langgraph-bridge.config`. In normal o
 - Infrastructure provisioning (LangGraph server, EC2 POC, networking).
 - LangGraph server administration (upgrades, thread cleanup, log rotation).
 - OpenClaw gateway setup or plugin installation.
-- Authoring the `fleet` workflow itself — see `ggettert/aidlc-fleet-poc`.
+- Authoring the `fleet` workflow itself — see `<your-org>/your-langgraph-workflows`.
