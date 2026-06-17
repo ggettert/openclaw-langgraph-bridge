@@ -78,4 +78,91 @@ describe("LanggraphClient", () => {
       client.createRun("t-1", { assistantId: "fleet" }),
     ).rejects.toBeInstanceOf(LanggraphHttpError);
   });
+
+  describe("getAssistantSchemas", () => {
+    it("returns schemas on success", async () => {
+      const schemas = {
+        input_schema: {
+          title: "FleetState",
+          type: "object",
+          properties: {
+            ticket_id: { type: "string" },
+            repo: { type: "string" },
+            spec_path: { type: "string" },
+          },
+          required: ["ticket_id", "repo", "spec_path"],
+        },
+        output_schema: { title: "FleetState", type: "object" },
+        state_schema: { title: "FleetState", type: "object" },
+        config_schema: { title: "Configurable", type: "object" },
+      };
+      let receivedUrl: string | undefined;
+      mockFetch(async (input, init) => {
+        receivedUrl = typeof input === "string" ? input : (input as Request).url;
+        expect(init?.method).toBe("GET");
+        return new Response(JSON.stringify(schemas), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      const result = await client.getAssistantSchemas("fleet");
+      expect(receivedUrl).toBe("http://lg/assistants/fleet/schemas");
+      expect(result).toEqual(schemas);
+    });
+
+    it("URL-encodes the workflow id", async () => {
+      let receivedUrl: string | undefined;
+      mockFetch(async (input) => {
+        receivedUrl = typeof input === "string" ? input : (input as Request).url;
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      await client.getAssistantSchemas("6d5d4365-62fd-59e2-807b-539d8f85d26e");
+      expect(receivedUrl).toBe(
+        "http://lg/assistants/6d5d4365-62fd-59e2-807b-539d8f85d26e/schemas",
+      );
+    });
+
+    it("throws LanggraphHttpError with status 404 when workflow not found", async () => {
+      mockFetch(async () =>
+        new Response(JSON.stringify({ detail: "Assistant not found" }), {
+          status: 404,
+          statusText: "Not Found",
+        }),
+      );
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      const err = await client
+        .getAssistantSchemas("no-such-workflow")
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LanggraphHttpError);
+      expect((err as LanggraphHttpError).status).toBe(404);
+    });
+
+    it("propagates network errors as plain Error", async () => {
+      mockFetch(async () => {
+        throw new TypeError("fetch failed");
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      await expect(
+        client.getAssistantSchemas("fleet"),
+      ).rejects.toThrow("fetch failed");
+    });
+
+    it("aborts and rejects on timeout", async () => {
+      mockFetch(async (_input, init) => {
+        // Wait until the AbortSignal fires, then throw
+        await new Promise<void>((_, reject) => {
+          const signal = (init as RequestInit).signal;
+          if (signal) {
+            signal.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }
+        });
+        return new Response(null, { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg", timeoutMs: 50 });
+      const promise = client.getAssistantSchemas("fleet");
+      vi.advanceTimersByTime(51);
+      await expect(promise).rejects.toThrow();
+    });
+  });
 });
