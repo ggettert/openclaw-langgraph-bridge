@@ -10,7 +10,7 @@
         "type": "string",
         "description": "Base URL of the LangGraph server. Phase 1 tool calls fail fast when unset.",
         "examples": [
-          "http://10.41.1.198:2024"
+          "http://langgraph.example.local:2024"
         ]
       },
       "callbackToken": {

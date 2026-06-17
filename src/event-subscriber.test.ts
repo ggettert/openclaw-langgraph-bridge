@@ -108,7 +108,7 @@ describe("classifyStreamFrame — updates", () => {
   // NOTE: the suppression of synthetic-terminal-on-close when a hitl was
   // already emitted lives in dispatchAndStream's frame loop, not in
   // classifyStreamFrame. That behavior is exercised in the live smoke
-  // (see BINGO-INT trace 2026-06-15 21:45 UTC) and would be nice to
+  // (intermittent test issue — trace 2026-06-15 21:45 UTC) and would be nice to
   // refactor for unit testability later.
 
   it("updates with node='__interrupt__' is classified as hitl (regression: 2026-06-15)", () => {
@@ -231,8 +231,8 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
           data: {
             phase: "designer",
             event: "started",
-            ticket_id: "BINGO-7",
-            product_spec_path: "feature/BINGO-7/product-spec.md",
+            ticket_id: "TASK-7",
+            product_spec_path: "feature/TASK-7/product-spec.md",
             revision_count: 0,
           },
         },
@@ -242,7 +242,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     );
     expect(body.kind).toBe("milestone");
     expect(body.title).toBe("designer:started");
-    expect(body.summary).toContain("BINGO-7");
+    expect(body.summary).toContain("TASK-7");
     expect(body.data).toMatchObject({ phase: "designer", event: "started" });
   });
 
@@ -254,9 +254,9 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
           data: {
             phase: "coder",
             event: "finished",
-            ticket_id: "BINGO-7",
-            pr_url: "https://github.com/ggettert/aidlc-sandbox/pull/42",
-            branch: "feature/BINGO-7",
+            ticket_id: "TASK-7",
+            pr_url: "https://github.com/<your-org>/your-target-repo/pull/42",
+            branch: "feature/TASK-7",
           },
         },
         "flow-1",
@@ -265,7 +265,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     );
     expect(body.kind).toBe("milestone");
     expect(body.title).toBe("coder:finished");
-    expect(body.summary).toContain("BINGO-7");
+    expect(body.summary).toContain("TASK-7");
     expect(body.summary).toContain("pull/42");
   });
 
