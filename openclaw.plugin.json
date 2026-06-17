@@ -17,6 +17,10 @@
         "type": "string",
         "description": "Shared secret the LangGraph workflow includes on inbound webhook POSTs. Required when the webhook handler is wired in Phase 2."
       },
+      "callbackPublicBaseUrl": {
+        "type": "string",
+        "description": "Public base URL the LangGraph server should POST events to, e.g. http://kit-host:18794. The plugin appends `/plugins/openclaw-langgraph-bridge/events` when dispatching."
+      },
       "agentId": {
         "type": "string",
         "description": "Agent id to wake via `openclaw agent` when a LangGraph event requires waking the session-bound agent. Default 'main'."
@@ -43,6 +47,8 @@
     "tools": [
       "langgraph_dispatch",
       "langgraph_inspect",
+      "langgraph_inspect_workflow",
+      "langgraph_list_workflows",
       "langgraph_resume"
     ]
   }
