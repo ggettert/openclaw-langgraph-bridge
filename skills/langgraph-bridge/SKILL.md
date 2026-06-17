@@ -10,7 +10,7 @@ Use this skill whenever you need to dispatch a durable LangGraph workflow from i
 
 Plugin: `openclaw-langgraph-bridge` v0.11.2+  
 Repo: github.com/ggettert/openclaw-langgraph-bridge  
-Three tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`
+Four tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_resume`
 
 ---
 
@@ -32,6 +32,13 @@ Three tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`
 ## Canonical lifecycle
 
 ```
+0. (optional)    for any workflow whose input shape you don't already know:
+                 langgraph_inspect_workflow(workflow_id)
+                 → read input_schema.properties + input_schema.required
+                 → construct the correct input object before dispatching.
+                 Skip this step only if you have already dispatched this
+                 workflow successfully in this session and know its shape.
+
 1. dispatch      agent calls langgraph_dispatch → plugin creates managed TaskFlow,
                  opens SSE stream to LangGraph, returns {flow_id, thread_id, run_id}
                  in < 10 s (default timeout).
@@ -85,6 +92,8 @@ spec_path   string   path to an existing spec file ALREADY committed to the repo
 
 The `spec_path` MUST exist in the repo before dispatch. The workflow's `/build` step will fail with a `RuntimeError` at runtime if the file is missing or if `spec_path` contains anything other than an actual path.
 
+> ⚠️ This example uses a known workflow shape (`fleet`). For any workflow you haven't dispatched before — or if you're not sure the shape hasn't changed — call `langgraph_inspect_workflow` first. See [Discovering and using unknown workflows](#discovering-and-using-unknown-workflows) below.
+
 **Worked example — dispatching the `fleet` workflow**
 
 ```python
@@ -132,6 +141,58 @@ langgraph_dispatch(
 # Result: dispatch succeeds, workflow starts, coder node crashes with
 # KeyError: 'spec_path' mid-run.
 ```
+
+---
+
+### `langgraph_inspect_workflow`
+
+Fetch the JSON-Schema definitions a workflow expects as input, output, state, and config. Call this **before dispatching any workflow whose input shape you don't already know**.
+
+**Parameters**
+
+| param | type | required | notes |
+|---|---|---|---|
+| `workflow_id` | string | ✓ | LangGraph assistant UUID or graph id (e.g. `"fleet"`). Must match an assistant registered on the LangGraph server |
+
+**Returns** (on success)
+
+```json
+{
+  "status": "ok",
+  "workflow_id": "fleet",
+  "schemas": {
+    "input_schema": { "title": "...", "type": "object", "properties": { ... }, "required": [ ... ] },
+    "output_schema": { ... },
+    "state_schema": { ... },
+    "config_schema": { ... }
+  }
+}
+```
+
+The key surface is `schemas.input_schema`. Read `properties` for the available fields and `required` for the mandatory ones. Construct your `langgraph_dispatch` input from these — do not guess.
+
+**When to use**
+
+- Any time you encounter a workflow you have not dispatched before in this session.
+- Any time you suspect the workflow's input schema may have changed.
+- Skip only if you dispatched this exact workflow successfully earlier in this session and the schema is stable.
+
+**Allowlist enforcement**
+
+If `allowedWorkflows` is configured and the `workflow_id` is not in it, the tool returns an error immediately — no LangGraph call is made:
+
+```json
+{ "status": "error", "reason": "workflow_not_allowed", "workflow_id": "..." }
+```
+
+**Error reasons**
+
+| reason | meaning | action |
+|---|---|---|
+| `workflow_not_allowed` | `workflow_id` is not in the configured allowlist | Check `allowedWorkflows` config; use an allowed id |
+| `workflow_not_found` | LangGraph server returned 404 for this assistant | Verify the workflow id is correct and the server is running |
+| `request_failed` | Network error, timeout, or server 5xx | Retry; if persistent, check LangGraph server health |
+| `missing_langgraph_base_url` | Plugin misconfigured | Set `langgraphBaseUrl` in plugin config |
 
 ---
 
@@ -214,6 +275,96 @@ langgraph_resume(
 
 ---
 
+## Discovering and using unknown workflows
+
+### The principle
+
+**Do not guess workflow input shapes from the workflow name.** LangGraph silently drops unknown keys at graph entry — it will accept a malformed input without error and only fail mid-run when a downstream node tries to read a key that was never set. You will see `KeyError: 'some_field'` in a terminal event, not a clean error at dispatch time.
+
+The fix is simple: **inspect first**.
+
+### The pattern
+
+```
+1. langgraph_inspect_workflow(workflow_id)  → get the schemas
+2. Read input_schema.properties + input_schema.required
+   to understand the exact fields the workflow expects
+3. langgraph_dispatch(workflow, input={...})  with the correct, complete input
+```
+
+You only need to do this once per workflow per session. If you've already dispatched `fleet` successfully in the current session and know its shape, skip the inspect step.
+
+### Worked example — inspecting before dispatching `fleet`
+
+**Step 1 — inspect the schema:**
+
+```python
+result = langgraph_inspect_workflow(workflow_id="fleet")
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "workflow_id": "fleet",
+  "schemas": {
+    "input_schema": {
+      "title": "FleetState",
+      "type": "object",
+      "properties": {
+        "ticket_id": { "type": "string" },
+        "repo":      { "type": "string" },
+        "spec_path": { "type": "string" }
+      },
+      "required": ["ticket_id", "repo", "spec_path"]
+    },
+    "output_schema": { "..." : "..." },
+    "state_schema":  { "..." : "..." },
+    "config_schema": { "..." : "..." }
+  }
+}
+```
+
+**Step 2 — read the schema:**
+
+- `input_schema.required` → `["ticket_id", "repo", "spec_path"]` — all three are mandatory.
+- `input_schema.properties` → the type of each field (all strings here).
+
+**Step 3 — dispatch with the correct input:**
+
+```python
+langgraph_dispatch(
+    workflow="fleet",
+    input={
+        "ticket_id": "BINGO-22",
+        "repo":      "<your-repo>",
+        "spec_path": "feature/BINGO-22/tech-spec.md"
+    }
+)
+```
+
+Because you built `input` directly from the schema's `properties` and `required` lists, no keys will be silently dropped and no downstream node will KeyError.
+
+### When to skip introspection
+
+- You have already dispatched this workflow successfully **in this session** and the shape is stable. Do not call `langgraph_inspect_workflow` on every dispatch — once per session per workflow is enough.
+- You maintain an out-of-band schema reference (e.g. this skill file) that you trust and that matches the deployed workflow.
+
+### Error handling
+
+If `langgraph_inspect_workflow` itself fails, **stop and resolve the error before dispatching**:
+
+| `reason` | what happened | what to do |
+|---|---|---|
+| `workflow_not_found` | The workflow id doesn't exist on the LangGraph server | Double-check the id; verify the LangGraph server is running the expected workflow |
+| `workflow_not_allowed` | The id is blocked by the `allowedWorkflows` allowlist | Use an allowed workflow id or update the config |
+| `request_failed` | Network error, timeout, or server 5xx | Retry; if persistent, check LangGraph server health |
+
+Do not fall back to guessing the schema if inspection fails — a blind dispatch will almost certainly KeyError mid-run.
+
+---
+
 ## Failure modes (from real history)
 
 ### KeyError: 'spec_path' (BINGO-9, BINGO-11)
@@ -228,6 +379,8 @@ langgraph_resume(
    need to be merged to `main` and does NOT require a PR. (Don't burn a merge
    gate just to land the spec; fleet reads `spec_path` straight from the repo.)
 3. Dispatch again with `spec_path` set to the exact file path, not a description.
+
+*Prevention*: call `langgraph_inspect_workflow('fleet')` first; the `required` field of `input_schema` would have surfaced `spec_path` as a mandatory key before dispatch.
 
 ### Stale plugin flow status after gateway restart
 
