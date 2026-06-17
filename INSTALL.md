@@ -8,6 +8,29 @@ Per-bot install runbook for v0.11.0+. Takes a working OpenClaw gateway and adds 
 
 ---
 
+## Supported channels
+
+*The plugin is tested against Slack only.* Other OpenClaw channels (Discord, Telegram, WhatsApp, Signal, IRC, etc.) are *theoretically* supported because:
+
+- The wire protocol (LangGraph dispatch / SSE event stream / webhook handler / wake-via-CLI) is channel-agnostic
+- The `openclaw agent --session-key` wake primitive routes wakes based on whatever channel the originating session was bound to
+- The only Slack-specific code is the `[reply-hint]` line emitted in wake messages for threaded channel sessions (`buildReplyHint` in `src/webhook-handler.ts`)
+
+### Channel compatibility status
+
+| Channel | Status | Notes |
+|---|---|---|
+| Slack DM | ✅ Tested | Validated against Kit + DevOps bot |
+| Slack channel thread | ✅ Tested | Validated against `#grace-kit-poc` thread (BINGO-10/11) |
+| Discord DM | 🟡 Untested | Wake should work; replies land in DM by default so no reply-hint needed |
+| Discord guild thread | 🟡 Untested | Wake should work; reply-hint needs a Discord-shaped session-key branch (~5 LOC) |
+| Telegram (DM + topics) | 🟡 Untested | Wake should work; reply-hint needs a Telegram-shaped session-key branch |
+| Other OpenClaw channels (WhatsApp, Signal, IRC, etc.) | 🟡 Untested | Same shape as the above |
+
+**Want to use this plugin with a non-Slack channel?** It will likely work for the dispatch + wake path, but the reply may land at channel root instead of in-thread. Open an issue + PR with the per-channel `buildReplyHint` branch and we'll merge.
+
+---
+
 ## Prerequisites
 
 Verify each before starting. Don't proceed if any are missing.
