@@ -73,4 +73,4 @@ Carpe's V1 product-bot architecture wants Kit (and other agents) to *be* the orc
 
 ## License
 
-Internal. See repo settings.
+Apache 2.0 — see [LICENSE](./LICENSE).
