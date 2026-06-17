@@ -2,7 +2,7 @@
  * Phase 1 live smoke test for the LangGraph client.
  *
  * Targets the dev server at the URL passed via env LANGGRAPH_BASE_URL
- * (default http://10.41.1.198:2024) and exercises:
+ * (default http://langgraph.example.local:2024) and exercises:
  *   1. /ok       — liveness
  *   2. /info     — server metadata
  *   3. POST /threads      — create a thread
@@ -17,7 +17,7 @@
 
 import { LanggraphClient, LanggraphHttpError } from "../src/langgraph-client.js";
 
-const BASE_URL = process.env.LANGGRAPH_BASE_URL ?? "http://10.41.1.198:2024";
+const BASE_URL = process.env.LANGGRAPH_BASE_URL ?? "http://langgraph.example.local:2024";
 const WORKFLOW = process.env.LANGGRAPH_WORKFLOW ?? "fleet";
 
 async function main() {

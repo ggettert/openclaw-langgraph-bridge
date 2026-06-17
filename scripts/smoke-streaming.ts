@@ -12,7 +12,7 @@
 import { dispatchAndStream } from "../src/event-subscriber.js";
 import { LanggraphClient } from "../src/langgraph-client.js";
 
-const BASE_URL = process.env.LANGGRAPH_BASE_URL ?? "http://10.41.1.198:2024";
+const BASE_URL = process.env.LANGGRAPH_BASE_URL ?? "http://langgraph.example.local:2024";
 const WORKFLOW = process.env.LANGGRAPH_WORKFLOW ?? "fleet";
 
 async function main() {

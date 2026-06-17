@@ -38,7 +38,7 @@ const ConfigSchema = Type.Object({
     Type.String({
       description:
         "Base URL of the LangGraph server. Dispatch fails fast when unset.",
-      examples: ["http://10.41.1.198:2024"],
+      examples: ["http://langgraph.example.local:2024"],
     }),
   ),
   callbackToken: Type.Optional(
@@ -208,7 +208,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     // Fetch the JSON-Schema shapes a workflow expects as input/output/state.
     // Agents MUST call this before dispatching any workflow whose input shape
     // they don't already know; LangGraph silently drops unknown keys and
-    // downstream nodes KeyError mid-run (root cause of BINGO-9 / BINGO-11).
+    // downstream nodes KeyError mid-run (root cause of schema mismatch bugs).
     api.registerTool(
       (_toolContext) => {
         const baseUrl = config.langgraphBaseUrl;
@@ -356,7 +356,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
           name: "langgraph_dispatch",
           label: "LangGraph Dispatch",
           description:
-            "Dispatch a LangGraph workflow run. The plugin creates a managed TaskFlow bound to the current session, kicks the run, and returns identifiers. status / milestone / decision / terminal / hitl events post back via the plugin webhook and surface as runtime events on the originating session.\n\nIMPORTANT: `input` must match the target workflow's state schema exactly. LangGraph silently drops unknown keys, which can cause downstream KeyErrors. For the `fleet` workflow specifically, required keys are `ticket_id`, `repo`, and `spec_path` — where `spec_path` is a path to an existing spec file *already committed* in the repo (e.g. `feature/BINGO-N/tech-spec.md`). Free-text descriptions are NOT a substitute. To inspect a workflow's schema: GET `<base>/assistants/<assistant_id>/schemas`.",
+            "Dispatch a LangGraph workflow run. The plugin creates a managed TaskFlow bound to the current session, kicks the run, and returns identifiers. status / milestone / decision / terminal / hitl events post back via the plugin webhook and surface as runtime events on the originating session.\n\nIMPORTANT: `input` must match the target workflow's state schema exactly. LangGraph silently drops unknown keys, which can cause downstream KeyErrors. For the `fleet` workflow specifically, required keys are `ticket_id`, `repo`, and `spec_path` — where `spec_path` is a path to an existing spec file *already committed* in the repo (e.g. `feature/<ticket-id>/tech-spec.md`). Free-text descriptions are NOT a substitute. To inspect a workflow's schema: GET `<base>/assistants/<assistant_id>/schemas`.",
           // Note: when the wake fires for an event tied to a Slack-threaded
           // session, the wake message will include a `[reply-hint]` line
           // pointing at the originating thread — see
@@ -678,8 +678,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               // worked, but no SSE subscriber was opened on the new run,
               // so any milestone / hitl / terminal events emitted by the
               // resumed graph never reached our processEvent pipeline and
-              // never woke the agent. Symptom: BINGO-9 resume merged on
-              // LangGraph but Kit was never woken about the terminal.
+              // never woke the agent. Symptom: resume merged on
+              // LangGraph but the agent was never woken about the terminal.
               //
               // Fix: route resume through dispatchAndStream with `command`
               // instead of `input`. Identical subscriber lifecycle to
@@ -978,7 +978,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
  *     unchanged so workflows whose interrupts expect raw payloads still work
  *
  * Aliases match the typical merge_gate / design_gate parser shape used in
- * langgraph workflows (see ggettert/aidlc-fleet-poc graph/workflow.py).
+ * langgraph workflows (see `<your-org>/your-langgraph-workflows` `graph/workflow.py`).
  */
 export function normalizeResumePayload(payload: unknown): unknown {
   if (typeof payload !== "string") return payload;

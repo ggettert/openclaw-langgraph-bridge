@@ -2,7 +2,7 @@
 
 Per-bot install runbook for v0.11.0+. Takes a working OpenClaw gateway and adds the bridge plugin so the agent can dispatch LangGraph workflows and be woken on milestones / HITL / terminal events in-thread.
 
-**Audience:** Carpe bot operator with shell access to the bot host. Walks through fresh install on a bot that has never had the plugin before.
+**Audience:** Bot operator with shell access to the bot host. Walks through fresh install on a bot that has never had the plugin before.
 
 **Time:** 5-10 minutes for a clean install. Add 5 min if you need to configure auth tokens.
 
@@ -20,8 +20,8 @@ Per-bot install runbook for v0.11.0+. Takes a working OpenClaw gateway and adds 
 
 | Channel | Status | Notes |
 |---|---|---|
-| Slack DM | ✅ Tested | Validated against Kit + DevOps bot |
-| Slack channel thread | ✅ Tested | Validated against `#grace-kit-poc` thread (BINGO-10/11) |
+| Slack DM | ✅ Tested | Validated in production |
+| Slack channel thread | ✅ Tested | Validated in a Slack channel thread |
 | Discord DM | 🟡 Untested | Wake should work; replies land in DM by default so no reply-hint needed |
 | Discord guild thread | 🟡 Untested | Wake should work; reply-hint needs a Discord-shaped session-key branch (~5 LOC) |
 | Telegram (DM + topics) | 🟡 Untested | Wake should work; reply-hint needs a Telegram-shaped session-key branch |
@@ -48,13 +48,13 @@ Verify each before starting. Don't proceed if any are missing.
    ```bash
    node --version  # v22.x.x
    ```
-4. **`gh` CLI authenticated** to a token with `read:packages` and read access to either `ggettert/openclaw-langgraph-bridge` (upstream) or `carpe/openclaw-langgraph-bridge` (Carpe fork). For Carpe bots, use the Carpe GitHub App token.
-5. **Reachable LangGraph server URL** — the URL the plugin will dispatch to. Note this; you'll need it for config. Default Carpe POC: `http://10.41.1.198:2024`.
+4. **`gh` CLI authenticated** to a token with `repo` scope and read access to `ggettert/openclaw-langgraph-bridge`.
+5. **Reachable LangGraph server URL** — the URL the plugin will dispatch to. Note this; you'll need it for config (e.g. `http://langgraph.example.local:2024`).
 6. **A pre-shared `callbackToken`** — a string the LangGraph workflow will include as `Authorization: Bearer <token>` on inbound webhook POSTs. Generate one if you don't have it:
    ```bash
    openssl rand -hex 32
    ```
-7. **`callbackPublicBaseUrl`** (if you want webhooks, recommended) — the URL the LangGraph server will reach this bot at. Plugin appends `/plugins/openclaw-langgraph-bridge/events`. For Kit's bot this is `http://10.41.3.60:18794`; for a new bot, find its gateway public/private IP + port.
+7. **`callbackPublicBaseUrl`** (if you want webhooks, recommended) — the URL the LangGraph server will reach this bot at. Plugin appends `/plugins/openclaw-langgraph-bridge/events`. Find your bot's gateway public/private IP + port.
 
 ---
 
@@ -64,29 +64,16 @@ This is the production path. Skip Path B unless you specifically want to build f
 
 ### A1. Download and extract
 
-Choose ONE source — they're built from the same commit:
+Download the release tarball:
 
 ```bash
-# Carpe fork (use Carpe org auth)
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
-gh release download v0.11.0 \
-  --repo carpe/openclaw-langgraph-bridge \
-  --pattern 'openclaw-langgraph-bridge-v0.11.0.tar.gz' \
-  --output /tmp/oclb.tgz
-tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
-rm /tmp/oclb.tgz
-```
-
-OR:
-
-```bash
-# Upstream (personal repo — same content)
 gh release download v0.11.0 \
   --repo ggettert/openclaw-langgraph-bridge \
   --pattern 'openclaw-langgraph-bridge-v0.11.0.tar.gz' \
   --output /tmp/oclb.tgz
-tar -xzf /tmp/oclb.tgz -C ~/.openclaw/extensions/openclaw-langgraph-bridge
+tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
 rm /tmp/oclb.tgz
 ```
 
@@ -113,7 +100,7 @@ For development bots or when you need a specific commit not yet released.
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
 cd "$EXT_DIR"
-gh repo clone carpe/openclaw-langgraph-bridge . -- --depth=1
+gh repo clone ggettert/openclaw-langgraph-bridge . -- --depth=1
 npm ci
 npm run build
 npm test  # should report 85+ passing
@@ -358,6 +345,6 @@ Track the full list at: https://github.com/ggettert/openclaw-langgraph-bridge/is
 
 ## Operator's reference
 
-- Plugin source: https://github.com/ggettert/openclaw-langgraph-bridge (canonical), mirrored at https://github.com/carpe/openclaw-langgraph-bridge
+- Plugin source: https://github.com/ggettert/openclaw-langgraph-bridge
 - Skill for agents using these tools: `skills/langgraph-bridge/SKILL.md` (ships inside the install)
 - Architecture: `DESIGN.md` (ships inside the install) — phase history

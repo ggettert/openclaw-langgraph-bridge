@@ -69,7 +69,7 @@ These keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.
 
 ## Why this exists
 
-This plugin's design goal is for the OpenClaw agent to *be* the orchestrator, not a thin trigger. LangGraph workflows do execution; OpenClaw agents drive decisions and conversation. This plugin is the seam that makes that work from inside an agent turn — no HTTP plumbing in the prompt, no session-key wrangling, no proxy hacks.
+This plugin implements an orchestrator architecture where the OpenClaw agent drives decisions and conversation while LangGraph workflows handle durable multi-step execution. The plugin is the seam that makes that work from inside an agent turn — no HTTP plumbing in the prompt, no session-key wrangling, no proxy hacks.
 
 ## License
 
