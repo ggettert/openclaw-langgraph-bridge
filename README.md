@@ -16,8 +16,6 @@ The root cause is structural: *a reasoning surface is not a reliable execution e
 
 The split is the point: *the agent stops being asked to be a reliable executor; the process stops being asked to be smart.* Each does what it is actually good at.
 
-(see [docs/business-case.md](./docs/business-case.md) once available)
-
 ---
 
 ## Quick start
@@ -68,7 +66,7 @@ flowchart LR
 
 ## Status
 
-> **v0.13.0+** — OSS readiness in progress. Five tools ship and are validated end-to-end. Active known issues are tracked at [github.com/ggettert/openclaw-langgraph-bridge/issues](https://github.com/ggettert/openclaw-langgraph-bridge/issues). See [docs/installation.md → Known issues](./docs/installation.md#known-issues) for the current list.
+> **v0.12.2+** — OSS readiness in progress. Five tools ship and are validated end-to-end. Active known issues are tracked at [github.com/ggettert/openclaw-langgraph-bridge/issues](https://github.com/ggettert/openclaw-langgraph-bridge/issues). See [docs/installation.md → Known issues](./docs/installation.md#known-issues) for the current list.
 >
 > **Channel compatibility:** Tested against Slack (DM + channel threads). Other OpenClaw channels are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. See [docs/installation.md → Supported channels](./docs/installation.md#supported-channels) for the compatibility matrix and how to add support for a new channel.
 
@@ -96,7 +94,7 @@ Keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.opencl
 | `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs |
 | `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server will POST events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
 | `agentId` | — | `"main"` | Agent id to wake on events |
-| `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids the agent may dispatch |
+| `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When set: `langgraph_dispatch` and `langgraph_inspect_workflow` block non-listed ids with an error; `langgraph_list_workflows` still returns all workflows but marks blocked ones `allowed: false`. Empty or unset permits all workflows. |
 | `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client |
 
 ---
