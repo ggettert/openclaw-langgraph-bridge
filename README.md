@@ -4,7 +4,9 @@ OpenClaw plugin that bridges an OpenClaw agent (orchestrator) with one or more L
 
 The agent stays in control of the conversation. The plugin handles the wire protocol.
 
-> **Status:** Production-shape. v0.11.0+ ships three tools (`langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`), an SSE event subscriber for live milestone/HITL/terminal streaming, a webhook endpoint for LangGraph-initiated callbacks, and proactive Slack wake via the `openclaw agent` CLI primitive. See [DESIGN.md](./DESIGN.md) for architecture history and [AUDIT-2026-06-16.md](./AUDIT-2026-06-16.md) for the latest adversarial review.
+> **Status:** Production-shape. v0.12.x ships five tools (`langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_list_workflows`, `langgraph_resume`), an SSE event subscriber for live milestone/HITL/terminal streaming, a webhook endpoint for LangGraph-initiated callbacks, and proactive Slack wake via the `openclaw agent` CLI primitive. See [DESIGN.md](./DESIGN.md) for architecture history and [AUDIT-2026-06-16.md](./AUDIT-2026-06-16.md) for the latest adversarial review.
+>
+> **Channel compatibility:** Tested against Slack (DM + channel threads). Other OpenClaw channels (Discord, Telegram, WhatsApp, Signal, IRC, etc.) are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. The reply-hint surface (`src/webhook-handler.ts: buildReplyHint`) currently only emits a hint for Slack threaded channel sessions; non-Slack channels may have replies land at channel root instead of in-thread. See [INSTALL.md → Supported channels](./INSTALL.md#supported-channels) for the compatibility matrix and how to add support for a new channel.
 
 ## The shape
 
