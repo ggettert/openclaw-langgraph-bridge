@@ -62,7 +62,7 @@ These keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.
 | `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs (`Authorization: Bearer <token>`) |
 | `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server POSTs events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
 | `agentId` | — | `"main"` | Agent id to wake when events fire |
-| `allowedWorkflows` | — | `[]` (no restriction) | Allowlist of assistant/graph ids the agent may dispatch |
+| `allowedWorkflows` | — | `[]` (no restriction) | Optional hardening: allowlist of assistant ids / graph ids the agent may dispatch / inspect / list. Empty or unset permits all workflows on the configured LangGraph server. See [INSTALL.md → Step 3a](./INSTALL.md#3a-register-a-config-block) for the use case. |
 | `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client |
 
 ## Why this exists

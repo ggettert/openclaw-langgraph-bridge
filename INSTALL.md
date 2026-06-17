@@ -115,17 +115,22 @@ Add or merge under the `plugins.entries.openclaw-langgraph-bridge` path:
       "openclaw-langgraph-bridge": {
         "enabled": true,
         "config": {
-          "langgraphBaseUrl": "http://10.41.1.198:2024",
+          "langgraphBaseUrl": "http://<your-langgraph-base-url>:2024",
           "callbackToken": "REPLACE_WITH_YOUR_TOKEN",
           "callbackPublicBaseUrl": "http://<this-bot-private-ip>:<gateway-port>",
           "agentId": "main",
-          "defaultTimeoutMs": 10000
+          "defaultTimeoutMs": 10000,
+          "allowedWorkflows": []
         }
       }
     }
   }
 }
 ```
+
+> **Optional hardening: `allowedWorkflows`.** If your bot should only be able to drive specific LangGraph workflows, set this to an allowlist of workflow ids (graph ids or assistant UUIDs). When set, `langgraph_dispatch`, `langgraph_inspect_workflow`, and `langgraph_list_workflows` enforce it — disallowed workflows return `{ status: "error", reason: "workflow_not_allowed" }`. For `langgraph_list_workflows`, blocked workflows are still visible but annotated with `allowed: false`. Leave empty (`[]`) or unset to permit all workflows on the configured LangGraph server.
+>
+> Example: `"allowedWorkflows": ["fleet", "pr_review"]` — the bot can dispatch those two workflows; any other id is refused.
 
 Key-by-key:
 
@@ -134,6 +139,7 @@ Key-by-key:
 - `callbackPublicBaseUrl` — recommended. Without it, the plugin still works via the SSE-only path, but workflow-side webhook callbacks (used for redundancy) won't have a target. **Do NOT include the path `/plugins/...`** — the plugin appends it.
 - `agentId` — the OpenClaw agent id to wake when events fire. Default `"main"` is right for single-agent bots. For multi-agent gateways, set this to the agent that should receive the wake.
 - `defaultTimeoutMs` — the LangGraph HTTP client timeout. Bump if your LangGraph endpoint is slow on cold start.
+- `allowedWorkflows` — optional hardening. Allowlist of assistant ids or graph ids the agent is permitted to dispatch, inspect, or list. When non-empty, any workflow id not in the list is refused. Empty array or omitting the key entirely permits all workflows. **Why use it:** limits blast radius if the agent is prompted toward an unintended workflow. Recommended for production bots wired to more than one workflow.
 
 ### 3b. Mark the plugin as load-allowed (only if `plugins.allow` is set)
 
@@ -207,7 +213,15 @@ curl -sS -m 5 -X POST \
 
 If you get `unauthorized` (401): wrong token. If you get connection timeout: the bot isn't reachable at `callbackPublicBaseUrl` from where you're testing.
 
-### 4d. End-to-end smoke test (optional, requires a known workflow)
+### 4d. Verify allowlist (if `allowedWorkflows` is configured)
+
+If you set `allowedWorkflows`, verify enforcement is active by asking the agent:
+
+> "List available LangGraph workflows."
+
+The agent should call `langgraph_list_workflows()` and surface a list where some workflows are marked `allowed: false`. If everything is marked `allowed: true`, your allowlist is either unset or matched too broadly.
+
+### 4e. End-to-end smoke test (optional, requires a known workflow)
 
 If the LangGraph server has the `fleet` workflow available and you have a `spec_path` in some repo:
 
