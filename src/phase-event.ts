@@ -9,9 +9,9 @@
  *
  * Contract version: schema_version=1 (see docs/phase-event-contract.md)
  *
- * Backward compatibility: schema_version is optional. Payloads without it
- * are treated as v1 by the plugin — the only difference is that `summary`
- * may be absent and the heuristic fallback (summarizeFleetData) is used.
+ * Backward compatibility: schema_version is optional. Payloads conforming to
+ * the v1 contract require `summary`; legacy payloads without `summary` fall
+ * through to translateFleetVocabulary's summarizeFleetData heuristics.
  */
 
 /** Valid values for the `event` field in a PhaseEventPayload. */
@@ -65,7 +65,8 @@ export type PhaseEventPayload = {
    * Human-readable one-liner describing what happened.
    * When present (non-empty), the plugin uses this directly instead of
    * generating a summary from the other fields via heuristics.
-   * Truncated to 500 chars by the plugin before it reaches the agent.
+   * Truncated by the plugin via `summaryMaxChars` (configurable, default 4000)
+   * in processEvent before delivery.
    *
    * Examples:
    *   started:  "analyzing spec"
@@ -125,6 +126,7 @@ export function isPhaseEventPayload(data: unknown): data is PhaseEventPayload {
     typeof d.event === "string" &&
     ["started", "finished", "failed"].includes(d.event) &&
     typeof d.ticket_id === "string" &&
-    typeof d.summary === "string"
+    typeof d.summary === "string" &&
+    d.summary.length > 0
   );
 }

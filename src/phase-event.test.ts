@@ -73,6 +73,17 @@ describe("isPhaseEventPayload", () => {
     ).toBe(false);
   });
 
+  it("returns false when summary is an empty string", () => {
+    expect(
+      isPhaseEventPayload({
+        phase: "coder",
+        event: "started",
+        ticket_id: "BINGO-42",
+        summary: "",
+      }),
+    ).toBe(false);
+  });
+
   it("returns false for an unrecognised event name", () => {
     expect(
       isPhaseEventPayload({

@@ -282,15 +282,8 @@ function translateFleetVocabulary(
 } {
   const eventNorm = fleetEvent.toLowerCase();
 
-  // Prefer explicit summary field (PhaseEventPayload.summary) over heuristic.
-  // If the workflow author provided a human-readable one-liner, use it directly
-  // (truncated to 500 chars per the v1 contract). Fall back to summarizeFleetData
-  // heuristics for legacy payloads that pre-date the explicit summary field.
-  // Prefer explicit summary field (PhaseEventPayload.summary) over heuristic.
-  // Use verbatim — processEvent in webhook-handler.ts applies the user-configured
-  // summaryMaxChars truncation. A second truncation here (to a hardcoded 500) would
-  // override the user's config if summaryMaxChars < 500 and silently cap at 500
-  // when summaryMaxChars > 500.
+  // Explicit summary preferred over summarizeFleetData heuristic.
+  // Truncation is owned by processEvent (see summaryMaxChars).
   const explicitSummary =
     typeof data.summary === "string" && data.summary.length > 0
       ? data.summary

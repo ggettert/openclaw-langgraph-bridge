@@ -55,8 +55,9 @@ The plugin receives this on the `custom` SSE stream, recognises the
 
 ### Summary truncation
 
-The plugin truncates `summary` to **500 chars** before it reaches the agent.
-Longer strings get ` …[truncated]` appended. Keep summaries under 500 chars.
+The plugin truncates `summary` via `summaryMaxChars` (configurable plugin config, default 4000).
+Workflows can emit longer summaries; the wake message will be cut at the configured cap
+with a `…[truncated]` suffix. Keep summaries reasonably short for readability.
 
 ---
 

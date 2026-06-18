@@ -486,12 +486,10 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
   // M1: single truncation source — no double truncation
   // -------------------------------------------------------------------------
 
-  it("explicit summary is NOT pre-truncated at 500 chars (processEvent owns truncation)", () => {
-    // A summary longer than 500 chars should pass through translateFleetVocabulary
-    // verbatim. The caller (processEvent in webhook-handler.ts) applies the
-    // user-configured summaryMaxChars cap. Double-truncation at 500 here
-    // would override summaryMaxChars < 500 and silently cap above it.
-    const longSummary = "x".repeat(600); // 600 chars > 500
+  it("passes summary through verbatim (truncation owned by processEvent)", () => {
+    // Explicit summary passes through translateFleetVocabulary verbatim.
+    // processEvent (webhook-handler.ts) applies the summaryMaxChars cap later.
+    const longSummary = "x".repeat(600); // 600 chars, longer than legacy 500 ref
     const body = emit(
       classifyStreamFrame(
         {

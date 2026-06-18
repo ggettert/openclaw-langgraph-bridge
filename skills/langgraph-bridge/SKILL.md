@@ -36,7 +36,7 @@ status message in the originating thread. No exceptions in v1.
 
 Format: `<emoji> <phase> <event-action> — <summary>`
 
-Truncate summary to 500 chars if longer; append ` …[truncated]`.
+Summary is truncated by the plugin per its `summaryMaxChars` config (default 4000) before the wake message reaches the skill.
 
 ### Examples
 
