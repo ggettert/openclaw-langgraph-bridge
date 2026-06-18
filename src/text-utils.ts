@@ -20,9 +20,11 @@ export const DEFAULT_SUMMARY_MAX_CHARS = 4000;
 
 /**
  * Truncate a plain string to at most `maxChars` characters. When
- * truncation is needed the cut is made at the last ASCII whitespace
+ * truncation is needed the cut is made at the last ASCII space (0x20)
  * within the window so we never split mid-word. A ` …[truncated]` suffix
- * is appended.
+ * is appended. Other whitespace characters (newlines, tabs) are not
+ * treated as cut points — if a value contains no space within the window
+ * the cut falls at `maxChars` exactly.
  */
 export function truncateSummary(
   text: string,
@@ -40,10 +42,16 @@ export function truncateSummary(
  *
  * If the compact serialisation fits within `maxChars`, it is returned
  * verbatim. When it exceeds the cap we use pretty-printed JSON
- * (`JSON.stringify(data, null, 2)`) before truncating so the cut always
- * lands between tokens (keys and values are on separate indented lines).
- * This guarantees we never emit broken-quote output like
- *   `"feature/BINGO-darkmode-build-41830   ← no closing quote`.
+ * (`JSON.stringify(data, null, 2)`) before truncating so the cut is
+ * much more likely to land between tokens (keys and values are on
+ * separate indented lines).
+ *
+ * Caveat: the cut is at the last space within the window. If a string
+ * value contains spaces the cut can still land inside the value, which
+ * leaves an unclosed quote in the literal output. Acceptable for our
+ * use case because the result is rendered as text in a wake message,
+ * not parsed as JSON downstream. If we ever need parseable output we'd
+ * need a real JSON-aware truncator (e.g. walk the AST).
  */
 export function truncateJsonSummary(
   data: unknown,

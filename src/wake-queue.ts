@@ -30,8 +30,13 @@ const draining = new Set<string>();
 
 /**
  * Enqueue a wake job for `sessionKey`. `run` must return a `Promise<void>`
- * that resolves (or rejects) when the wake subprocess has exited. Errors
- * are caught and logged inside `run`; they do not stall the queue.
+ * that resolves (or rejects) when the wake subprocess has exited.
+ *
+ * Job rejections are caught here so a single failure does not stall the
+ * queue, but the queue itself does NOT log them. Callers are expected to
+ * do their own logging inside `run` (the default `wakeAgentAsync` path
+ * does — see wake-agent.ts). A `run` that rejects silently will fail
+ * silently from the queue's perspective.
  *
  * Jobs for the same `sessionKey` are executed in FIFO order. Jobs for
  * different keys execute concurrently (independent queues).
@@ -60,8 +65,9 @@ async function drain(sessionKey: string): Promise<void> {
       try {
         await job.run();
       } catch {
-        // The error was already logged inside `run`. Swallow here so we
-        // continue draining rather than leaving the queue permanently stalled.
+        // Swallow so we continue draining rather than leaving the queue
+        // permanently stalled. We rely on `run` itself to surface errors
+        // (the default wakeAgentAsync path logs via its injected logger).
       }
     }
   } finally {
