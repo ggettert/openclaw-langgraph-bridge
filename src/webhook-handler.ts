@@ -41,7 +41,9 @@ import {
   classifyEvent,
   type LanggraphEventKind,
 } from "./event-classifier.js";
-import { wakeAgent } from "./wake-agent.js";
+import { wakeAgentAsync } from "./wake-agent.js";
+import { enqueueWake as enqueueWakeDefault } from "./wake-queue.js";
+import { truncateSummary } from "./text-utils.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -89,10 +91,29 @@ export type WebhookHandlerDeps = {
     };
   };
   /**
-   * Override the wake function. Defaults to the real `wakeAgent`. Used
-   * in tests to assert the call without actually shelling out.
+   * Override the async wake function. Defaults to the real
+   * `wakeAgentAsync`. Used in tests to assert calls without shelling out.
+   * The return type is `void | Promise<void>` so that synchronous vi.fn()
+   * mocks remain compatible in unit tests that don't need to test the
+   * queue ordering behaviour.
    */
-  wake?: typeof wakeAgent;
+  wake?: (params: Parameters<typeof wakeAgentAsync>[0], deps?: Parameters<typeof wakeAgentAsync>[1]) => void | Promise<void>;
+  /**
+   * Override the queue enqueue function. Defaults to the real
+   * `enqueueWake` from wake-queue.ts. Inject a synchronous version in
+   * unit tests that want immediate (non-deferred) wake delivery so that
+   * existing assertions on `deps.wake` don't need to await queue drain.
+   */
+  enqueueWake?: (sessionKey: string, run: () => Promise<void>) => void;
+  /**
+   * Maximum characters for the summary field in wake messages. When a
+   * body.summary exceeds this cap the text is truncated at the last
+   * ASCII space (0x20) and a ` …[truncated]` marker is appended.
+   * Other whitespace (newlines, tabs) is not treated as a cut point.
+   * Defaults to
+   * 4000. Configurable via plugin config `summaryMaxChars`.
+   */
+  summaryMaxChars?: number;
   logger?: {
     info?: (msg: string) => void;
     warn?: (msg: string) => void;
@@ -172,7 +193,8 @@ export function processEvent(params: {
 
   const classification = classifyEvent({ kind });
   const title = body.title ?? `langgraph:${kind}`;
-  const summary = (body.summary ?? "").slice(0, 280);
+  // Configurable summary cap — defaults to 4000 chars. See ./text-utils.
+  const summary = truncateSummary(body.summary ?? "", deps.summaryMaxChars);
 
   // 1. Always update flow state. The shape of the update depends on kind.
   switch (kind) {
@@ -228,15 +250,18 @@ export function processEvent(params: {
   //    intentionally silent. The agent will see the latest flow state
   //    whenever it next turns for any other reason.
   if (actionRequiresWake(classification.action)) {
-    const wake = deps.wake ?? wakeAgent;
+    const doEnqueue = deps.enqueueWake ?? enqueueWakeDefault;
+    const wakeImpl = deps.wake ?? wakeAgentAsync;
     const wakeMessage = formatEventText(kind, title, summary, sessionKey);
-    wake(
-      {
-        agentId: deps.agentId,
-        sessionKey,
-        message: wakeMessage,
-      },
-      { logger: deps.logger },
+    doEnqueue(
+      sessionKey,
+      () =>
+        Promise.resolve(
+          wakeImpl(
+            { agentId: deps.agentId, sessionKey, message: wakeMessage },
+            { logger: deps.logger },
+          ),
+        ),
     );
   }
 
