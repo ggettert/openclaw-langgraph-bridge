@@ -336,6 +336,181 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.kind).toBe("status");
     expect(body.summary).toContain("progress");
   });
+
+  // -------------------------------------------------------------------------
+  // Phase event contract (#42) — explicit summary + field propagation tests
+  // -------------------------------------------------------------------------
+
+  it("explicit summary field preferred over heuristic when present", () => {
+    // When the workflow author provides data.summary, that string is used
+    // instead of the summarizeFleetData heuristic.
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            phase: "coder",
+            event: "started",
+            ticket_id: "BINGO-42",
+            summary: "analyzing spec for BINGO-42",
+          },
+        },
+        "flow-1",
+        20,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("coder:started");
+    // Should use the explicit summary, not the heuristic (ticket_id alone)
+    expect(body.summary).toBe("analyzing spec for BINGO-42");
+  });
+
+  it("heuristic summary used when explicit summary field is absent", () => {
+    // Legacy payload without data.summary falls back to summarizeFleetData.
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            phase: "coder",
+            event: "finished",
+            ticket_id: "BINGO-42",
+            pr_url: "https://github.com/acme/repo/pull/99",
+            // no summary field
+          },
+        },
+        "flow-1",
+        21,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("coder:finished");
+    // Heuristic includes ticket_id and pr_url
+    expect(body.summary).toContain("BINGO-42");
+    expect(body.summary).toContain("pull/99");
+  });
+
+  it("verdict and pr_url propagate into body.data", () => {
+    // Ensure verdict, pr_url, and branch flow through to body.data so
+    // the agent's wake handler can read them without re-parsing.
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            phase: "reviewer",
+            event: "finished",
+            ticket_id: "BINGO-42",
+            summary: "verdict: approve",
+            pr_url: "https://github.com/acme/repo/pull/99",
+            branch: "feature/BINGO-42",
+            verdict: "approve",
+          },
+        },
+        "flow-1",
+        22,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.summary).toBe("verdict: approve");
+    // pr_url, branch, verdict must be present in body.data
+    const d = body.data as Record<string, unknown>;
+    expect(d.verdict).toBe("approve");
+    expect(d.pr_url).toBe("https://github.com/acme/repo/pull/99");
+    expect(d.branch).toBe("feature/BINGO-42");
+  });
+
+  // -------------------------------------------------------------------------
+  // M2: typed fast path via isPhaseEventPayload
+  // -------------------------------------------------------------------------
+
+  it("typed fast path (isPhaseEventPayload=true) uses summary verbatim and propagates error field", () => {
+    // When the payload has all required PhaseEventPayload fields, the typed
+    // fast path is taken: summary is used verbatim, all optional fields
+    // (including error) are preserved in body.data.
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            schema_version: 1,
+            phase: "coder",
+            event: "failed",
+            ticket_id: "BINGO-99",
+            summary: "RuntimeError: git push rejected",
+            pr_url: "https://github.com/acme/repo/pull/7",
+            error: "RuntimeError: git push rejected\nfull traceback ...",
+          },
+        },
+        "flow-fast",
+        30,
+      ),
+    );
+    // failed event maps to terminal
+    expect(body.kind).toBe("terminal");
+    expect(body.title).toBe("coder:failed");
+    // summary comes from the typed field, not heuristic
+    expect(body.summary).toBe("RuntimeError: git push rejected");
+    // error field preserved in body.data
+    const d = body.data as Record<string, unknown>;
+    expect(d.error).toContain("RuntimeError");
+    expect(d.pr_url).toBe("https://github.com/acme/repo/pull/7");
+    expect(d.ticket_id).toBe("BINGO-99");
+  });
+
+  it("typed fast path (isPhaseEventPayload=true) for started event -> milestone", () => {
+    // Validates that a full PhaseEventPayload with schema_version takes the
+    // fast path and correctly classifies started -> milestone.
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            schema_version: 1,
+            phase: "merge_gate",
+            event: "started",
+            ticket_id: "BINGO-100",
+            summary: "waiting for human approval",
+          },
+        },
+        "flow-fast",
+        31,
+      ),
+    );
+    expect(body.kind).toBe("milestone");
+    expect(body.title).toBe("merge_gate:started");
+    expect(body.summary).toBe("waiting for human approval");
+  });
+
+  // -------------------------------------------------------------------------
+  // M1: single truncation source — no double truncation
+  // -------------------------------------------------------------------------
+
+  it("passes summary through verbatim (truncation owned by processEvent)", () => {
+    // Explicit summary passes through translateFleetVocabulary verbatim.
+    // processEvent (webhook-handler.ts) applies the summaryMaxChars cap later.
+    const longSummary = "x".repeat(600); // 600 chars, longer than legacy 500 ref
+    const body = emit(
+      classifyStreamFrame(
+        {
+          event: "custom",
+          data: {
+            schema_version: 1,
+            phase: "coder",
+            event: "started",
+            ticket_id: "BINGO-trunc",
+            summary: longSummary,
+          },
+        },
+        "flow-trunc",
+        32,
+      ),
+    );
+    // Summary reaches the classifier result without being cut at 500.
+    // processEvent (not tested here) will apply summaryMaxChars later.
+    expect(body.summary).toBe(longSummary);
+    expect(body.summary!.length).toBe(600);
+  });
 });
 
 // ---------------------------------------------------------------------------
