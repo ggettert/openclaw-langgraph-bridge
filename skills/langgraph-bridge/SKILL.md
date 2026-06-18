@@ -71,6 +71,22 @@ Dispatch confirmation (not a phase event): 🚀
 
 Empty in v1. Every event posts. Add suppression here if real noise emerges.
 
+### decision_only and phase events
+
+> Note: `langgraph_dispatch` defaults to `decision_only: true`, meaning the
+> plugin filters `status`-kind events from waking the agent — those events
+> update flow state silently without a wake call.
+>
+> Phase events (`started`, `finished`, `failed`) all classify as `milestone`
+> or `terminal`, so they **always wake the agent** regardless of the
+> `decision_only` setting. In practice this means every workflow node that
+> uses `emit_phase_event()` will trigger a thread post.
+>
+> If you need every event (including raw `status` events from custom stream
+> writes) to wake the agent, set `decision_only: false` at dispatch time.
+> This is rarely needed — the standard phase vocabulary covers all expected
+> notification points.
+
 ---
 
 ## Canonical lifecycle
