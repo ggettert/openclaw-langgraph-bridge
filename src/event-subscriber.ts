@@ -43,6 +43,7 @@
 
 import type { IncomingEventBody } from "./webhook-handler.js";
 import type { LanggraphEventKind } from "./event-classifier.js";
+import { isPhaseEventPayload } from "./phase-event.js";
 
 /** One parsed SSE frame from the LangGraph stream. */
 export type ParsedStreamFrame = {
@@ -182,7 +183,25 @@ export function classifyStreamFrame(
         };
       }
 
-      // Shape 2: native fleet vocabulary {phase, event, ...}
+      // Shape 2a: typed PhaseEventPayload — fast path when isPhaseEventPayload
+      // validates true (schema_version present or required fields all valid).
+      // Trust the typed fields; translateFleetVocabulary still maps kind/title,
+      // but we KNOW summary is present so it's used verbatim with no heuristic.
+      if (isPhaseEventPayload(data)) {
+        const translated = translateFleetVocabulary(data.phase, data.event, data);
+        return {
+          kind: "emit",
+          body: {
+            ...translated,
+            flow_id: flowId,
+            seq,
+            data,
+          },
+        };
+      }
+
+      // Shape 2b: legacy fleet vocabulary {phase, event, ...} without required
+      // fields (e.g. no summary, no ticket_id). Falls back to heuristic summary.
       const phase = data.phase as string | undefined;
       const fleetEvent = data.event as string | undefined;
       if (phase && fleetEvent) {
@@ -262,7 +281,15 @@ function translateFleetVocabulary(
   summary: string;
 } {
   const eventNorm = fleetEvent.toLowerCase();
-  const summary = summarizeFleetData(data);
+
+  // Explicit summary preferred over summarizeFleetData heuristic.
+  // Truncation is owned by processEvent (see summaryMaxChars).
+  const explicitSummary =
+    typeof data.summary === "string" && data.summary.length > 0
+      ? data.summary
+      : null;
+  const summary = explicitSummary ?? summarizeFleetData(data);
+
   if (eventNorm === "started" || eventNorm === "start") {
     return { kind: "milestone", title: `${phase}:started`, summary };
   }
