@@ -8,7 +8,8 @@ argument-hint: "workflow id or graph id, plus structured input matching the targ
 
 Use this skill whenever you need to dispatch a durable LangGraph workflow from inside an agent turn and receive proactive wake-backs when that workflow emits events (milestones, HITL interrupts, terminal).
 
-Plugin: `openclaw-langgraph-bridge` v0.12.0+  
+Plugin: `openclaw-langgraph-bridge` v0.12.4+  
+Phase event contract: `schema_version: 1` (see [docs/phase-event-contract.md](../../docs/phase-event-contract.md))  
 Repo: github.com/ggettert/openclaw-langgraph-bridge  
 Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_list_workflows`, `langgraph_resume`
 
@@ -24,8 +25,51 @@ Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workfl
 
 - **Synchronous one-shot calls** that return in < 1 s — just call the downstream API directly.
 - **Local-only logic** that doesn't need durable execution state in LangGraph.
-- **Anything that doesn't need proactive wake-back** — if you don't need to be told when it's done, don't wrap it.
 - **Writing or modifying the workflow graph itself** — this skill is for consumers of workflows, not authors.
+
+---
+
+## Wake response pattern (default behaviour)
+
+When woken by ANY event from a dispatched LangGraph flow, post ONE short
+status message in the originating thread. No exceptions in v1.
+
+Format: `<emoji> <phase> <event-action> — <summary>`
+
+Truncate summary to 500 chars if longer; append ` …[truncated]`.
+
+### Examples
+
+- 🚀 Dispatched. Workflow sdlc-feature, run abc123.
+- 🛠️ coder started — analyzing spec
+- ✅ coder finished — opened https://github.com/.../pull/42
+- 👀 reviewer started — running /review
+- ⚖️ reviewer finished — verdict: approve
+- 🤝 merge_gate started — waiting for human approval
+- 🎉 merge finished — merged https://github.com/.../pull/42
+- ❌ coder failed — RuntimeError: git push rejected: non-fast-forward
+
+### Emoji mapping
+
+| Phase        | started | finished | failed |
+| ------------ | ------- | -------- | ------ |
+| coder        | 🛠️       | ✅       | ❌     |
+| reviewer     | 👀       | ⚖️        | ❌     |
+| merge_gate   | 🤝       | (n/a)    | ❌     |
+| merge        | 🚚       | 🎉       | ❌     |
+| (other)      | ▶️       | ✅       | ❌     |
+
+Dispatch confirmation (not a phase event): 🚀
+
+### What stays inline / what gets its own post
+
+- HITL interrupt (merge_gate started): post the prompt + wait for human reply
+- Reviewer verdict: include in `reviewer finished` summary (set via verdict= field)
+- Terminal: emoji per outcome (🎉 success, ❌ failure)
+
+### Suppression list
+
+Empty in v1. Every event posts. Add suppression here if real noise emerges.
 
 ---
 
@@ -496,13 +540,17 @@ A workflow author whose graph emits a different vocabulary may produce different
 
 **Fix:** Use the direct LangGraph API to check truth (see escape hatch below), then call `langgraph_resume` with the correct payload if the thread is waiting, or take no action if it already completed.
 
-### Post-resume events not surfacing (pre-v0.10.0 / Phase 5 gap)
+### Post-resume events not surfacing
 
-**Symptom:** `langgraph_resume` returns `status: "resumed"`, but the agent is never woken again — even though the workflow continued running, passed through more milestones, and reached a terminal.
+> **This is fixed in v0.10.0+ (Phase 5).** Post-resume milestone and terminal
+> events now surface correctly via the fresh SSE subscriber opened on each resume.
+> The note below is kept for context on pre-v0.10.0 installs only.
+
+**Symptom (pre-v0.10.0 only):** `langgraph_resume` returns `status: "resumed"`, but the agent is never woken again — even though the workflow continued running, passed through more milestones, and reached a terminal.
 
 **Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake. This was the dogfood scenario that caught this — the merge landed on LangGraph but the agent was never woken about the terminal.
 
-**Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch. If you are seeing this on a patched version, check that the gateway is actually running the updated plugin binary (`grep -c "resume_run_id" dist/index.js`).
+**Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch. If you are on v0.12.4+ this is not your issue — check plugin config or session binding instead.
 
 ### Post-resume frame replay / out-of-order events
 
