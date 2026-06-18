@@ -70,18 +70,21 @@ const DEFAULT_TURN_TIMEOUT_MS = 600_000;
 const EXEC_BACKSTOP_PADDING_MS = 30_000;
 
 /**
- * Fire a proactive agent turn. Returns immediately; the caller is not
- * expected to await any meaningful result (`Promise<void>`).
+ * Fire a proactive agent turn. Returns a `Promise<void>` that resolves
+ * when the subprocess exits (or rejects on error / timeout).
  *
- * Behaviour on failure: logs a warning. Does NOT throw. The webhook
- * handler should still return 200 to LangGraph even if the wake CLI
- * subprocess fails — we don't want LangGraph retrying webhooks because
- * our wake plumbing hiccupped.
+ * The queue worker (`wake-queue.ts`) awaits this promise before pulling
+ * the next job, which is how we enforce per-sessionKey FIFO ordering.
+ *
+ * Error behaviour: the promise rejects on subprocess error so the queue
+ * can catch-and-continue. The error is also logged. The webhook handler
+ * should still return 200 to LangGraph even if wake fails — errors here
+ * must not propagate to the HTTP response path.
  */
-export function wakeAgent(
+export function wakeAgentAsync(
   params: WakeAgentParams,
   deps: WakeAgentDeps = {},
-): void {
+): Promise<void> {
   const bin = deps.bin ?? process.env.OPENCLAW_BIN ?? "openclaw";
   const execFile = deps.execFile ?? execFileCb;
   const env = deps.env ?? process.env;
@@ -89,18 +92,18 @@ export function wakeAgent(
   const logger = deps.logger;
 
   if (!params.agentId) {
-    logger?.warn?.("langgraph-bridge: wakeAgent skipped — no agentId");
-    return;
+    logger?.warn?.("langgraph-bridge: wakeAgentAsync skipped — no agentId");
+    return Promise.resolve();
   }
   if (!params.sessionKey) {
     logger?.warn?.(
-      "langgraph-bridge: wakeAgent skipped — no sessionKey (would land on :main, invisible to Slack thread)",
+      "langgraph-bridge: wakeAgentAsync skipped — no sessionKey (would land on :main, invisible to Slack thread)",
     );
-    return;
+    return Promise.resolve();
   }
   if (!params.message) {
-    logger?.warn?.("langgraph-bridge: wakeAgent skipped — empty message");
-    return;
+    logger?.warn?.("langgraph-bridge: wakeAgentAsync skipped — empty message");
+    return Promise.resolve();
   }
 
   const args = [
@@ -116,27 +119,31 @@ export function wakeAgent(
     String(Math.ceil(turnTimeoutMs / 1000)),
   ];
 
-  execFile(
-    bin,
-    args,
-    {
-      timeout: turnTimeoutMs + EXEC_BACKSTOP_PADDING_MS,
-      env,
-    },
-    (err) => {
-      if (err) {
-        logger?.warn?.(
-          `langgraph-bridge: wakeAgent(${params.agentId}) subprocess failed: ${err.message}`,
-        );
-      } else {
-        logger?.info?.(
-          `langgraph-bridge: wakeAgent(${params.agentId}) completed`,
-        );
-      }
-    },
+  logger?.info?.(
+    `langgraph-bridge: wakeAgentAsync dispatched agent=${params.agentId} sessionKey=${params.sessionKey} msglen=${params.message.length}`,
   );
 
-  logger?.info?.(
-    `langgraph-bridge: wakeAgent dispatched agent=${params.agentId} sessionKey=${params.sessionKey} msglen=${params.message.length}`,
-  );
+  return new Promise<void>((resolve, reject) => {
+    execFile(
+      bin,
+      args,
+      {
+        timeout: turnTimeoutMs + EXEC_BACKSTOP_PADDING_MS,
+        env,
+      },
+      (err) => {
+        if (err) {
+          logger?.warn?.(
+            `langgraph-bridge: wakeAgentAsync(${params.agentId}) subprocess failed: ${err.message}`,
+          );
+          reject(err);
+        } else {
+          logger?.info?.(
+            `langgraph-bridge: wakeAgentAsync(${params.agentId}) completed`,
+          );
+          resolve();
+        }
+      },
+    );
+  });
 }

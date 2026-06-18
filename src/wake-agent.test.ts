@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { wakeAgent } from "./wake-agent.js";
+import { wakeAgentAsync } from "./wake-agent.js";
 
 type ExecFileLike = (
   file: string,
@@ -31,11 +31,11 @@ function makeLogger() {
   };
 }
 
-describe("wakeAgent", () => {
-  it("dispatches `openclaw agent` with required flags", () => {
+describe("wakeAgentAsync", () => {
+  it("dispatches `openclaw agent` with required flags and returns a Promise", async () => {
     const { fn, calls } = makeExecFile();
     const logger = makeLogger();
-    wakeAgent(
+    const result = wakeAgentAsync(
       {
         agentId: "main",
         sessionKey: "agent:main:slack:direct:u123",
@@ -43,6 +43,9 @@ describe("wakeAgent", () => {
       },
       { execFile: fn as never, logger },
     );
+    // Must return a Promise
+    expect(result).toBeInstanceOf(Promise);
+    await result;
     expect(calls).toHaveLength(1);
     expect(calls[0]!.file).toBe("openclaw");
     expect(calls[0]!.args).toEqual([
@@ -58,9 +61,9 @@ describe("wakeAgent", () => {
     ]);
   });
 
-  it("execFile timeout is strictly larger than --timeout to avoid mid-turn SIGTERM", () => {
+  it("execFile timeout is strictly larger than --timeout to avoid mid-turn SIGTERM", async () => {
     const { fn, calls } = makeExecFile();
-    wakeAgent(
+    await wakeAgentAsync(
       {
         agentId: "main",
         sessionKey: "k",
@@ -74,19 +77,19 @@ describe("wakeAgent", () => {
     expect(calls[0]!.args).toContain("120");
   });
 
-  it("respects OPENCLAW_BIN override", () => {
+  it("respects OPENCLAW_BIN override", async () => {
     const { fn, calls } = makeExecFile();
-    wakeAgent(
+    await wakeAgentAsync(
       { agentId: "a", sessionKey: "s", message: "m" },
       { execFile: fn as never, bin: "/custom/openclaw" },
     );
     expect(calls[0]!.file).toBe("/custom/openclaw");
   });
 
-  it("skips with warning when agentId is missing", () => {
+  it("skips with warning and resolves immediately when agentId is missing", async () => {
     const { fn, calls } = makeExecFile();
     const logger = makeLogger();
-    wakeAgent(
+    await wakeAgentAsync(
       { agentId: "", sessionKey: "s", message: "m" },
       { execFile: fn as never, logger },
     );
@@ -94,10 +97,10 @@ describe("wakeAgent", () => {
     expect(logger.warn).toHaveBeenCalledOnce();
   });
 
-  it("skips with warning when sessionKey is missing", () => {
+  it("skips with warning and resolves immediately when sessionKey is missing", async () => {
     const { fn, calls } = makeExecFile();
     const logger = makeLogger();
-    wakeAgent(
+    await wakeAgentAsync(
       { agentId: "a", sessionKey: "", message: "m" },
       { execFile: fn as never, logger },
     );
@@ -105,19 +108,30 @@ describe("wakeAgent", () => {
     expect(logger.warn).toHaveBeenCalledOnce();
   });
 
-  it("does not throw if execFile subprocess fails — logs warn", async () => {
+  it("rejects when subprocess fails — logs warn and rejects with the error", async () => {
     const errFn: ExecFileLike = (_f, _a, _o, cb) => {
       queueMicrotask(() => cb(new Error("boom"), "", ""));
       return undefined;
     };
     const logger = makeLogger();
-    expect(() =>
-      wakeAgent(
+    await expect(
+      wakeAgentAsync(
         { agentId: "a", sessionKey: "s", message: "m" },
         { execFile: errFn as never, logger },
       ),
-    ).not.toThrow();
-    await new Promise((r) => queueMicrotask(() => r(null)));
+    ).rejects.toThrow("boom");
     expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("resolves (not rejects) on subprocess success", async () => {
+    const { fn } = makeExecFile();
+    const logger = makeLogger();
+    await expect(
+      wakeAgentAsync(
+        { agentId: "a", sessionKey: "s", message: "m" },
+        { execFile: fn as never, logger },
+      ),
+    ).resolves.toBeUndefined();
+    expect(logger.info).toHaveBeenCalled();
   });
 });

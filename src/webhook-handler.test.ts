@@ -31,6 +31,11 @@ function makeDeps() {
       },
     },
     wake: calls.wake,
+    // Unit-test queue: call run() synchronously (fire-and-forget) so that
+    // assertions on calls.wake don't need to await async queue drain.
+    enqueueWake: (_key, run) => {
+      void run();
+    },
   };
   return { deps, calls };
 }
@@ -171,8 +176,31 @@ describe("processEvent — terminal", () => {
 });
 
 describe("processEvent — text formatting", () => {
-  it("truncates summary to 280 chars in wake message", () => {
+  it("truncates summary to summaryMaxChars (default 4000) in wake message", () => {
     const { deps, calls } = makeDeps();
+    // 6000 'x's is above the 4000 default cap.
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "f1",
+        title: "long-event",
+        summary: "x".repeat(6000),
+      },
+      sessionKey: "s",
+      flowRevision: 1,
+      deps,
+    });
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toMatch(/\[langgraph:decision\] long-event\n/);
+    // No spaces in the summary so the cut lands at exactly the cap.
+    const summaryLine = wakeArgs.message.split("\n")[1]!;
+    expect(summaryLine.endsWith(" \u2026[truncated]")).toBe(true);
+    expect(summaryLine.length).toBe(4000 + 13); // 'x'.repeat(4000) + ' …[truncated]'
+  });
+
+  it("respects a custom summaryMaxChars from deps", () => {
+    const { deps, calls } = makeDeps();
+    deps.summaryMaxChars = 100;
     processEvent({
       body: {
         kind: "decision",
@@ -185,8 +213,110 @@ describe("processEvent — text formatting", () => {
       deps,
     });
     const wakeArgs = calls.wake.mock.calls[0]![0];
-    expect(wakeArgs.message).toMatch(/\[langgraph:decision\] long-event\n/);
-    expect(wakeArgs.message.split("\n")[1]!.length).toBe(280);
+    const summaryLine = wakeArgs.message.split("\n")[1]!;
+    expect(summaryLine.endsWith(" \u2026[truncated]")).toBe(true);
+    expect(summaryLine.length).toBe(100 + 13);
+  });
+
+  it("does NOT truncate summary that fits within the cap", () => {
+    const { deps, calls } = makeDeps();
+    const shortSummary = "a short summary";
+    processEvent({
+      body: {
+        kind: "milestone",
+        flow_id: "f1",
+        title: "x",
+        summary: shortSummary,
+      },
+      sessionKey: "s",
+      flowRevision: 1,
+      deps,
+    });
+    const wakeArgs = calls.wake.mock.calls[0]![0];
+    expect(wakeArgs.message).toContain(shortSummary);
+    expect(wakeArgs.message).not.toContain("\u2026[truncated]");
+  });
+});
+
+describe("processEvent — FIFO wake ordering (real queue)", () => {
+  it("3 milestone events arrive in emission order when real enqueueWake is used", async () => {
+    // This test does NOT inject enqueueWake, so the real per-sessionKey
+    // FIFO queue from wake-queue.ts is exercised end-to-end.
+    const sessionKey = `agent:main:slack:dm:order-test-${Math.random()}`;
+    const wakeOrder: string[] = [];
+
+    // Deferred promises give us explicit control over when each
+    // "subprocess" resolves so we can verify ordering under back-pressure.
+    type Deferred = { resolve: () => void; promise: Promise<void> };
+    const makeDeferredWake = (): Deferred => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      return { resolve, promise };
+    };
+
+    const d = [makeDeferredWake(), makeDeferredWake(), makeDeferredWake()];
+    let callIdx = 0;
+
+    const wake = vi.fn(async (params: WakeAgentParams) => {
+      const idx = callIdx++;
+      // Extract the event title from the formatted message (format: "[langgraph:milestone] <title>")
+      const titleMatch = params.message.match(/\[langgraph:milestone\] (\S+)/);
+      wakeOrder.push(titleMatch?.[1] ?? `idx-${idx}`);
+      await d[idx]!.promise;
+    });
+
+    const get = vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
+      () => ({ owner_key: sessionKey, revision: 1 }),
+    );
+    const deps: WebhookHandlerDeps = {
+      expectedToken: "secret",
+      pluginId: "openclaw-langgraph-bridge",
+      agentId: "main",
+      runtime: {
+        tasks: {
+          managedFlows: {
+            bindSession: () => ({
+              get,
+              runTask: vi.fn(),
+              setWaiting: vi.fn(),
+              finish: vi.fn(),
+            }),
+          },
+        },
+      },
+      wake,
+      // No enqueueWake override — real queue from wake-queue.ts
+    };
+
+    const mkEvent = (title: string) => ({
+      body: { kind: "milestone" as const, flow_id: "f-ord", title, summary: "" },
+      sessionKey,
+      flowRevision: 1,
+      deps,
+    });
+
+    // Emit 3 events in quick succession. Drain starts async; all 3 land
+    // in the queue before the first subprocess exits.
+    processEvent(mkEvent("first"));
+    processEvent(mkEvent("second"));
+    processEvent(mkEvent("third"));
+
+    // Let the drain loop start and call the first wake.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(wakeOrder).toEqual(["first"]); // only first has started
+
+    d[0]!.resolve(); // finish first
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(wakeOrder).toEqual(["first", "second"]);
+
+    d[1]!.resolve(); // finish second
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(wakeOrder).toEqual(["first", "second", "third"]);
+
+    d[2]!.resolve(); // finish third
+    await new Promise<void>((r) => setTimeout(r, 0));
   });
 });
 

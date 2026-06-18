@@ -219,6 +219,19 @@ export function classifyStreamFrame(
   return { kind: "skip" };
 }
 
+// ---------------------------------------------------------------------------
+// Summary truncation helpers
+// ---------------------------------------------------------------------------
+
+// Truncation utilities moved to ./text-utils.js and re-exported for
+// backward compatibility with existing import sites and tests.
+export {
+  DEFAULT_SUMMARY_MAX_CHARS,
+  truncateSummary,
+  truncateJsonSummary,
+} from "./text-utils.js";
+import { truncateSummary, truncateJsonSummary } from "./text-utils.js";
+
 const VALID_KINDS = new Set<string>([
   "status",
   "milestone",
@@ -289,7 +302,7 @@ function summarizeFleetData(data: Record<string, unknown>): string {
     parts.push(productSpec);
   const rev = data.revision_count;
   if (typeof rev === "number") parts.push(`rev=${rev}`);
-  if (parts.length > 0) return parts.join(" | ").slice(0, 280);
+  if (parts.length > 0) return truncateSummary(parts.join(" | "));
   return summarizeForHumans(data);
 }
 
@@ -304,26 +317,22 @@ function isValidKind(s: string): s is LanggraphEventKind {
  */
 function summarizeInterruptPrompt(interrupt: Record<string, unknown>): string {
   const value = interrupt.value;
-  if (typeof value === "string") return value.slice(0, 280);
+  if (typeof value === "string") return truncateSummary(value);
   if (value && typeof value === "object") {
     const v = value as Record<string, unknown>;
     const prompt =
       (v.prompt as string | undefined) ??
       (v.message as string | undefined) ??
       (v.question as string | undefined);
-    if (prompt) return prompt.slice(0, 280);
+    if (prompt) return truncateSummary(prompt);
   }
   return summarizeForHumans(value);
 }
 
 function summarizeForHumans(data: unknown): string {
   if (data === null || data === undefined) return "";
-  if (typeof data === "string") return data.slice(0, 280);
-  try {
-    return JSON.stringify(data).slice(0, 280);
-  } catch {
-    return "(unsummarizable)";
-  }
+  if (typeof data === "string") return truncateSummary(data);
+  return truncateJsonSummary(data);
 }
 
 // ---------------------------------------------------------------------------
