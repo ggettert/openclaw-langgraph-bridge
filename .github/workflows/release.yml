@@ -43,6 +43,9 @@ jobs:
           npm ci --omit=dev
 
       - name: Package release tarball
+        # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md,
+        # DESIGN.md → docs/design.md, the AUDIT-* file moved out of the
+        # tarball entirely (internal Carpe artifact per OSS-readiness review).
         run: |
           tar -czf openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz \
             dist/ \
@@ -50,9 +53,7 @@ jobs:
             openclaw.plugin.json \
             package.json \
             README.md \
-            INSTALL.md \
-            AUDIT-2026-06-16.md \
-            DESIGN.md \
+            docs/ \
             skills/
 
       - name: Create GitHub Release
