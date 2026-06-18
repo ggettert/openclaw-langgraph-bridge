@@ -262,7 +262,17 @@ function translateFleetVocabulary(
   summary: string;
 } {
   const eventNorm = fleetEvent.toLowerCase();
-  const summary = summarizeFleetData(data);
+
+  // Prefer explicit summary field (PhaseEventPayload.summary) over heuristic.
+  // If the workflow author provided a human-readable one-liner, use it directly
+  // (truncated to 500 chars per the v1 contract). Fall back to summarizeFleetData
+  // heuristics for legacy payloads that pre-date the explicit summary field.
+  const explicitSummary =
+    typeof data.summary === "string" && data.summary.length > 0
+      ? truncateSummary(data.summary, 500)
+      : null;
+  const summary = explicitSummary ?? summarizeFleetData(data);
+
   if (eventNorm === "started" || eventNorm === "start") {
     return { kind: "milestone", title: `${phase}:started`, summary };
   }
