@@ -77,7 +77,7 @@ const ConfigSchema = Type.Object({
   summaryMaxChars: Type.Optional(
     Type.Integer({
       description:
-        "Maximum characters for event summaries in wake messages. Summaries longer than this cap are truncated at the last whitespace and a \" \u2026[truncated]\" marker is appended. Default 4000.",
+        "Maximum characters for event summaries in wake messages. Summaries longer than this cap are truncated at the last ASCII space (0x20) and a \" \u2026[truncated]\" marker is appended; other whitespace (newlines, tabs) is not treated as a cut point. Default 4000.",
       minimum: 100,
       maximum: 50000,
       examples: [4000],

@@ -108,7 +108,9 @@ export type WebhookHandlerDeps = {
   /**
    * Maximum characters for the summary field in wake messages. When a
    * body.summary exceeds this cap the text is truncated at the last
-   * whitespace and a ` …[truncated]` marker is appended. Defaults to
+   * ASCII space (0x20) and a ` …[truncated]` marker is appended.
+   * Other whitespace (newlines, tabs) is not treated as a cut point.
+   * Defaults to
    * 4000. Configurable via plugin config `summaryMaxChars`.
    */
   summaryMaxChars?: number;
