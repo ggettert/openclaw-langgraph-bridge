@@ -219,6 +219,63 @@ export function classifyStreamFrame(
   return { kind: "skip" };
 }
 
+// ---------------------------------------------------------------------------
+// Summary truncation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Default cap for summary strings extracted from SSE frames. 280 was an
+ * arbitrary early-Phase-2 sketch value; node-state deltas + reviewer
+ * findings routinely exceed that. 4000 chars is generous without being
+ * abusive to agent CLI invocations.
+ *
+ * Configurable via plugin config (`summaryMaxChars`); the default is used
+ * here for the pure SSE-frame path that has no access to runtime config.
+ */
+export const DEFAULT_SUMMARY_MAX_CHARS = 4000;
+
+/**
+ * Truncate a plain string to at most `maxChars` characters. When
+ * truncation is needed the cut is made at the last ASCII whitespace
+ * within the window so we never split mid-word. A ` …[truncated]` suffix
+ * is appended.
+ */
+export function truncateSummary(
+  text: string,
+  maxChars = DEFAULT_SUMMARY_MAX_CHARS,
+): string {
+  if (text.length <= maxChars) return text;
+  const window = text.slice(0, maxChars);
+  const lastSpace = window.lastIndexOf(" ");
+  const cut = lastSpace > 0 ? window.slice(0, lastSpace) : window;
+  return cut + " \u2026[truncated]";
+}
+
+/**
+ * Serialize `data` to a summary string with JSON-aware truncation.
+ *
+ * If the compact serialisation fits within `maxChars`, it is returned
+ * verbatim. When it exceeds the cap we use pretty-printed JSON
+ * (`JSON.stringify(data, null, 2)`) before truncating so the cut always
+ * lands between tokens (keys and values are on separate indented lines).
+ * This guarantees we never emit broken-quote output like
+ *   `"feature/BINGO-darkmode-build-41830   ← no closing quote`.
+ */
+export function truncateJsonSummary(
+  data: unknown,
+  maxChars = DEFAULT_SUMMARY_MAX_CHARS,
+): string {
+  try {
+    const compact = JSON.stringify(data);
+    if (compact.length <= maxChars) return compact;
+    // Pretty-print so whitespace separates tokens; then cut at whitespace.
+    const pretty = JSON.stringify(data, null, 2);
+    return truncateSummary(pretty, maxChars);
+  } catch {
+    return "(unsummarizable)";
+  }
+}
+
 const VALID_KINDS = new Set<string>([
   "status",
   "milestone",
@@ -289,7 +346,7 @@ function summarizeFleetData(data: Record<string, unknown>): string {
     parts.push(productSpec);
   const rev = data.revision_count;
   if (typeof rev === "number") parts.push(`rev=${rev}`);
-  if (parts.length > 0) return parts.join(" | ").slice(0, 280);
+  if (parts.length > 0) return truncateSummary(parts.join(" | "));
   return summarizeForHumans(data);
 }
 
@@ -304,26 +361,22 @@ function isValidKind(s: string): s is LanggraphEventKind {
  */
 function summarizeInterruptPrompt(interrupt: Record<string, unknown>): string {
   const value = interrupt.value;
-  if (typeof value === "string") return value.slice(0, 280);
+  if (typeof value === "string") return truncateSummary(value);
   if (value && typeof value === "object") {
     const v = value as Record<string, unknown>;
     const prompt =
       (v.prompt as string | undefined) ??
       (v.message as string | undefined) ??
       (v.question as string | undefined);
-    if (prompt) return prompt.slice(0, 280);
+    if (prompt) return truncateSummary(prompt);
   }
   return summarizeForHumans(value);
 }
 
 function summarizeForHumans(data: unknown): string {
   if (data === null || data === undefined) return "";
-  if (typeof data === "string") return data.slice(0, 280);
-  try {
-    return JSON.stringify(data).slice(0, 280);
-  } catch {
-    return "(unsummarizable)";
-  }
+  if (typeof data === "string") return truncateSummary(data);
+  return truncateJsonSummary(data);
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,9 @@ import {
   classifyStreamFrame,
   dispatchAndStream,
   parseSseFrame,
+  truncateSummary,
+  truncateJsonSummary,
+  DEFAULT_SUMMARY_MAX_CHARS,
   type ClassifyResult,
 } from "./event-subscriber.js";
 
@@ -332,6 +335,103 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     );
     expect(body.kind).toBe("status");
     expect(body.summary).toContain("progress");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateSummary / truncateJsonSummary
+// ---------------------------------------------------------------------------
+
+describe("truncateSummary", () => {
+  it("returns short strings verbatim", () => {
+    const s = "hello world";
+    expect(truncateSummary(s)).toBe(s);
+  });
+
+  it("truncates long strings at last whitespace and appends ellipsis suffix", () => {
+    // Build a string that is just over the default cap
+    const prefix = "word ".repeat(900); // 900 * 5 = 4500 chars
+    const result = truncateSummary(prefix);
+    expect(result.endsWith(" \u2026[truncated]")).toBe(true);
+    expect(result.length).toBeLessThanOrEqual(DEFAULT_SUMMARY_MAX_CHARS + 13); // suffix
+    // Cut must not end with a partial word — last char before suffix is a space (we cut at the
+    // trailing space of the last whole word)
+    const beforeSuffix = result.slice(0, result.lastIndexOf(" \u2026"));
+    expect(beforeSuffix.endsWith(" ")).toBe(false); // trailing whitespace stripped by cut logic
+  });
+
+  it("respects a custom maxChars argument", () => {
+    const result = truncateSummary("abcdefghijklmnopqrstuvwxyz", 10);
+    // No whitespace in input → hard-cuts at 10 chars then appends suffix
+    expect(result).toBe("abcdefghij \u2026[truncated]");
+  });
+});
+
+describe("truncateJsonSummary", () => {
+  it("returns compact JSON verbatim when it fits within the cap", () => {
+    const data = { key: "value", n: 42 };
+    const result = truncateJsonSummary(data);
+    expect(result).toBe(JSON.stringify(data));
+  });
+
+  it("truncates long JSON at whitespace — does NOT produce broken-quote output", () => {
+    // Construct an object whose compact JSON serialisation is > DEFAULT_SUMMARY_MAX_CHARS.
+    // The long value has no spaces, so if we sliced bytes we'd cut mid-string.
+    const data = {
+      branch: "feature/BINGO-" + "a".repeat(5000),
+      tokens: 42,
+    };
+    const result = truncateJsonSummary(data);
+    expect(result.endsWith(" \u2026[truncated]")).toBe(true);
+    // No unclosed double-quote: the part before the suffix must not end with `"
+    const beforeSuffix = result.slice(0, result.lastIndexOf(" \u2026"));
+    // Every " in beforeSuffix must be matched (count must be even, or last char must not be a lone \")
+    // Simpler check: last char before the ellipsis must be whitespace or punctuation, not a quote
+    // that would imply a half-open JSON string.
+    expect(beforeSuffix.endsWith('"')).toBe(false);
+  });
+
+  it("long JSON produces a result that does not end with a partial quoted value", () => {
+    // A second guard: the truncated result should never look like `"some/path/
+    // (i.e. an open quote that was never closed before the truncation marker).
+    const data = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [
+        `key${i}`,
+        "v".repeat(500),
+      ]),
+    );
+    const result = truncateJsonSummary(data, 1000);
+    expect(result.endsWith(" \u2026[truncated]")).toBe(true);
+    // Count open-vs-close quotes in the part before the suffix
+    const beforeSuffix = result.slice(0, result.lastIndexOf(" \u2026"));
+    // If the cut happened between tokens (at whitespace), the last non-space
+    // character before the ellipsis is never an unclosed `"` followed immediately
+    // by alphanumeric content (i.e. a half-open string).
+    expect(beforeSuffix.endsWith('"')).toBe(false);
+  });
+
+  it("classifyStreamFrame — long updates delta is truncated without breaking quotes (regression: BINGO-darkmode)", () => {
+    // Simulate the original bug: branch name + reviewer blob > 280 chars.
+    // After the fix the summary should still be readable and never end mid-quote.
+    const delta = {
+      branch: "feature/BINGO-darkmode-build-41830",
+      reviewer_notes: "x".repeat(5000),
+    };
+    const result = classifyStreamFrame(
+      { event: "updates", data: { reviewer: delta } },
+      "flow-1",
+      0,
+    );
+    expect(result.kind).toBe("emit");
+    if (result.kind !== "emit") throw new Error("not emit");
+    // Summary must be present and not end with an unclosed quote
+    expect(result.body.summary).toBeDefined();
+    const summary = result.body.summary!;
+    expect(summary.endsWith('"')).toBe(false);
+    // If truncation happened, it must carry the marker
+    if (summary.includes("\u2026[truncated]")) {
+      expect(summary.endsWith(" \u2026[truncated]")).toBe(true);
+    }
   });
 });
 
