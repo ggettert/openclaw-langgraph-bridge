@@ -467,6 +467,8 @@ The bridge plugin translates fleet's native `{phase, event, ...}` custom-stream 
 
 A workflow author whose graph emits a different vocabulary may produce different event titles. Use `langgraph_inspect_workflow` to learn the workflow's contract; the schemas show state fields but not custom-event vocabulary, so worst case the agent should observe a few runs and learn the pattern.
 
+**Workflow authors:** see [`docs/phase-event-contract.md`](../../docs/phase-event-contract.md) for the full payload schema, worked examples, and the `emit_phase_event` Python helper.
+
 ---
 
 ## Failure modes (from real history)
