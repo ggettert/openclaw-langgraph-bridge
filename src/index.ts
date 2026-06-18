@@ -74,6 +74,15 @@ const ConfigSchema = Type.Object({
       maximum: 120000,
     }),
   ),
+  summaryMaxChars: Type.Optional(
+    Type.Integer({
+      description:
+        "Maximum characters for event summaries in wake messages. Summaries longer than this cap are truncated at the last whitespace and a \" \u2026[truncated]\" marker is appended. Default 4000.",
+      minimum: 100,
+      maximum: 50000,
+      examples: [4000],
+    }),
+  ),
 });
 
 type PluginConfig = Static<typeof ConfigSchema>;
@@ -119,6 +128,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
       expectedToken: config.callbackToken,
       pluginId: "openclaw-langgraph-bridge",
       agentId: config.agentId ?? "main",
+      summaryMaxChars: config.summaryMaxChars ?? 4000,
       runtime: {
         tasks: {
           managedFlows: {
