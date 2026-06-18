@@ -94,8 +94,8 @@ describe("enqueueWake — FIFO ordering, same sessionKey", () => {
     const d1 = deferred();
     const d2 = deferred();
 
-    enqueueWake(sessionKey, () => d1.promise.then(() => calls.push("job1")));
-    enqueueWake(sessionKey, () => d2.promise.then(() => calls.push("job2")));
+    enqueueWake(sessionKey, () => d1.promise.then(() => { calls.push("job1"); }));
+    enqueueWake(sessionKey, () => d2.promise.then(() => { calls.push("job2"); }));
 
     await flushMicrotasks();
     // Job 2's deferred is resolved first — but it can't start until job 1 finishes.
@@ -122,8 +122,8 @@ describe("enqueueWake — different sessionKeys do not block each other", () => 
     const dA = deferred();
     const dB = deferred();
 
-    enqueueWake(keyA, () => dA.promise.then(() => calls.push("A")));
-    enqueueWake(keyB, () => dB.promise.then(() => calls.push("B")));
+    enqueueWake(keyA, () => dA.promise.then(() => { calls.push("A"); }));
+    enqueueWake(keyB, () => dB.promise.then(() => { calls.push("B"); }));
 
     await flushMicrotasks();
     // Both drains are active simultaneously.
@@ -151,8 +151,8 @@ describe("enqueueWake — different sessionKeys do not block each other", () => 
     const dA = deferred(); // never resolved in this test
     const dB = deferred();
 
-    enqueueWake(keyA, () => dA.promise.then(() => calls.push("A")));
-    enqueueWake(keyB, () => dB.promise.then(() => calls.push("B")));
+    enqueueWake(keyA, () => dA.promise.then(() => { calls.push("A"); }));
+    enqueueWake(keyB, () => dB.promise.then(() => { calls.push("B"); }));
 
     await flushMicrotasks();
     dB.resolve();
@@ -181,7 +181,7 @@ describe("enqueueWake — error in run does not stall drain", () => {
 
     enqueueWake(sessionKey, () => dBad.promise); // will reject
     enqueueWake(sessionKey, () =>
-      dGood.promise.then(() => calls.push("good")),
+      dGood.promise.then(() => { calls.push("good"); }),
     );
 
     await flushMicrotasks();
@@ -208,12 +208,12 @@ describe("enqueueWake — late-arriving jobs join in-flight drain", () => {
     const d1 = deferred();
     const d2 = deferred();
 
-    enqueueWake(sessionKey, () => d1.promise.then(() => calls.push("first")));
+    enqueueWake(sessionKey, () => d1.promise.then(() => { calls.push("first"); }));
     await flushMicrotasks();
     expect(_testIsDraining(sessionKey)).toBe(true);
 
     // Enqueue while drain is awaiting d1.
-    enqueueWake(sessionKey, () => d2.promise.then(() => calls.push("second")));
+    enqueueWake(sessionKey, () => d2.promise.then(() => { calls.push("second"); }));
     expect(_testQueueDepth(sessionKey)).toBe(1); // queued, drain not restarted
 
     d1.resolve();

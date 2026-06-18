@@ -43,6 +43,7 @@ import {
 } from "./event-classifier.js";
 import { wakeAgentAsync } from "./wake-agent.js";
 import { enqueueWake as enqueueWakeDefault } from "./wake-queue.js";
+import { truncateSummary } from "./text-utils.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -190,19 +191,8 @@ export function processEvent(params: {
 
   const classification = classifyEvent({ kind });
   const title = body.title ?? `langgraph:${kind}`;
-  // Configurable summary cap — defaults to 4000 chars. Cut at last whitespace
-  // so we never split mid-word; append the truncation marker when needed.
-  const maxSummaryChars = deps.summaryMaxChars ?? 4000;
-  const rawSummary = body.summary ?? "";
-  const summary =
-    rawSummary.length <= maxSummaryChars
-      ? rawSummary
-      : (() => {
-          const window = rawSummary.slice(0, maxSummaryChars);
-          const lastSpace = window.lastIndexOf(" ");
-          const cut = lastSpace > 0 ? window.slice(0, lastSpace) : window;
-          return cut + " \u2026[truncated]";
-        })();
+  // Configurable summary cap — defaults to 4000 chars. See ./text-utils.
+  const summary = truncateSummary(body.summary ?? "", deps.summaryMaxChars);
 
   // 1. Always update flow state. The shape of the update depends on kind.
   switch (kind) {
