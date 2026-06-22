@@ -347,7 +347,7 @@ Fixed in v0.11.2 (was open at v0.11.0/v0.11.1):
 Still open at v0.12.0 — each will bite eventually if not avoided:
 
 - **#7 (M2)**: Failed dispatches leave orphan "queued" flow records visible to `langgraph_inspect`. No data loss, but confuses inspect output.
-- **#6 (M1)**: `decision_only` parameter has no effect. Don't rely on it; expect every milestone to fire a wake.
+- ~~**#6 (M1)**: `decision_only` parameter has no effect. Don't rely on it; expect every milestone to fire a wake.~~ Fixed in v1.0: `decision_only=true` (default) now suppresses milestone wakes; only decision/HITL/terminal events wake the agent.
 - **#11 (M6)**: `callbackToken` exposure path to LangGraph metadata — unverified. If LangGraph workflow authors are untrusted, audit before deploying with webhooks enabled.
 - **#8 (M3)**: Dead code in `LanggraphClient.resumeRun()` has wrong wire format. Cosmetic until something revives it.
 - **#9 (M4)**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.

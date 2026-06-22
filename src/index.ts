@@ -99,7 +99,7 @@ const DispatchParams = Type.Object({
   decision_only: Type.Optional(
     Type.Boolean({
       description:
-        "When true (default), only decision/milestone/terminal events wake the agent; status events update flow state silently. Recorded in flow metadata for the Phase 2 webhook classifier.",
+        "When true (default), only decision/HITL/terminal events wake the agent; milestone events update flow state silently. When false, milestone events also wake the agent. Status events never wake regardless.",
     }),
   ),
 });

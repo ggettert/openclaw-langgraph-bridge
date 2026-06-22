@@ -74,18 +74,16 @@ Empty in v1. Every event posts. Add suppression here if real noise emerges.
 ### decision_only and phase events
 
 > Note: `langgraph_dispatch` defaults to `decision_only: true`, meaning the
-> plugin filters `status`-kind events from waking the agent — those events
+> plugin suppresses milestone events from waking the agent — those events
 > update flow state silently without a wake call.
 >
-> Phase events (`started`, `finished`, `failed`) all classify as `milestone`
-> or `terminal`, so they **always wake the agent** regardless of the
-> `decision_only` setting. In practice this means every workflow node that
-> uses `emit_phase_event()` will trigger a thread post.
+> Only **decision**, **HITL**, and **terminal** events wake the agent when
+> `decision_only: true` (the default). Status events never wake the agent
+> regardless of this setting.
 >
-> If you need every event (including raw `status` events from custom stream
-> writes) to wake the agent, set `decision_only: false` at dispatch time.
-> This is rarely needed — the standard phase vocabulary covers all expected
-> notification points.
+> If you want milestone events (e.g. `started`, `step:done`) to also wake
+> the agent, set `decision_only: false` at dispatch time. This gives finer-
+> grained visibility into workflow progress at the cost of more thread posts.
 
 ---
 
@@ -136,7 +134,7 @@ Dispatch a new workflow run. Returns synchronously once LangGraph has accepted t
 |---|---|---|---|
 | `workflow` | string | ✓ | LangGraph assistant UUID or graph id (e.g. `"fleet"`) |
 | `input` | object | ✓ (for fleet) | Must match the workflow's state schema exactly — see warning below |
-| `decision_only` | boolean | — | Default `true`. When true, only milestone/decision/terminal/hitl events wake the agent; status events update flow state silently |
+| `decision_only` | boolean | — | Default `true`. When true, only decision/HITL/terminal events wake the agent; milestone events update flow state silently. When false, milestone events also wake the agent. Status events never wake regardless. |
 
 > **⚠ Schema enforcement.** LangGraph silently drops unknown keys in `input`. If your input has the wrong shape, downstream workflow nodes will raise `KeyError` when they try to read a field they expect. You will NOT get a clear error back from dispatch — you'll get a mid-run failure event. Always use the exact schema for your workflow (GET `<langgraph_base_url>/assistants/<assistant_id>/schemas` to inspect).
 

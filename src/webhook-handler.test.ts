@@ -515,6 +515,53 @@ describe("processEvent — decision_only flag (#6)", () => {
     expect(calls.runTask).toHaveBeenCalledOnce();
     expect(calls.wake).not.toHaveBeenCalled();
   });
+
+  it("defaults to decision_only=true when stateJson lacks the field (backward-compat for pre-#6 flows)", () => {
+    // Simulate a flow dispatched before #6 — stateJson exists (workflow stored)
+    // but the decision_only key was never written into it.
+    // Milestone event arrives → no wake fires because default is true.
+    const calls = {
+      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
+      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
+      finish: vi.fn<(...args: AnyArgs) => unknown>(),
+      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
+        () => ({
+          owner_key: "agent:main:dm:user",
+          revision: 1,
+          stateJson: { workflow: "fleet" }, // stateJson present but no decision_only key
+        }),
+      ),
+      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
+    };
+    const deps: WebhookHandlerDeps = {
+      expectedToken: "secret",
+      pluginId: "openclaw-langgraph-bridge",
+      agentId: "main",
+      runtime: {
+        tasks: {
+          managedFlows: {
+            bindSession: () => ({
+              get: calls.get,
+              runTask: calls.runTask,
+              setWaiting: calls.setWaiting,
+              finish: calls.finish,
+            }),
+          },
+        },
+      },
+      wake: calls.wake,
+      enqueueWake: (_key, run) => { void run(); },
+    };
+    processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // Pre-#6 flows never stored decision_only; absence → default true → no wake.
+    expect(calls.runTask).toHaveBeenCalledOnce();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
 });
 
 describe("processEvent — terminated-flow guard (#10, #16)", () => {
