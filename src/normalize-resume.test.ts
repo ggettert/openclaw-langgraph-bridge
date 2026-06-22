@@ -33,9 +33,7 @@ describe("normalizeResumePayload — HITL keywords -> structured shape", () => {
   });
 
   it("non-keyword strings pass through unchanged", () => {
-    expect(normalizeResumePayload("just some plain feedback")).toBe(
-      "just some plain feedback",
-    );
+    expect(normalizeResumePayload("just some plain feedback")).toBe("just some plain feedback");
   });
 
   it("objects pass through unchanged", () => {

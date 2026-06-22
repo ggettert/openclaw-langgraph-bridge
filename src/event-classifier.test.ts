@@ -48,32 +48,22 @@ describe("actionRequiresWake", () => {
     expect(actionRequiresWake("flow-update-only")).toBe(false);
   });
 
-  it.each([
-    ["wake-light"],
-    ["wake-decision"],
-    ["wake-terminal"],
-    ["wake-hitl"],
-  ] as const)("%s requires wake", (action) => {
-    expect(actionRequiresWake(action)).toBe(true);
-  });
+  it.each([["wake-light"], ["wake-decision"], ["wake-terminal"], ["wake-hitl"]] as const)(
+    "%s requires wake",
+    (action) => {
+      expect(actionRequiresWake(action)).toBe(true);
+    },
+  );
 });
 
 describe("actionHeartbeatReason", () => {
   it("prefixes with langgraph-", () => {
-    expect(actionHeartbeatReason("wake-decision")).toBe(
-      "langgraph-wake-decision",
-    );
+    expect(actionHeartbeatReason("wake-decision")).toBe("langgraph-wake-decision");
   });
 });
 
 describe("classifyEvent — exhaustive", () => {
-  const kinds: LanggraphEventKind[] = [
-    "status",
-    "milestone",
-    "decision",
-    "terminal",
-    "hitl",
-  ];
+  const kinds: LanggraphEventKind[] = ["status", "milestone", "decision", "terminal", "hitl"];
 
   it("returns a result for every documented kind", () => {
     for (const kind of kinds) {

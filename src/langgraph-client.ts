@@ -202,7 +202,10 @@ export class LanggraphClient {
   // dispatchAndStream. Resume is now handled via dispatchAndStream with
   // a `command` field — see src/index.ts, the langgraph_resume tool.
 
-  async createRun(threadId: string, opts: LanggraphCreateRunOptions): Promise<LanggraphCreateRunResult> {
+  async createRun(
+    threadId: string,
+    opts: LanggraphCreateRunOptions,
+  ): Promise<LanggraphCreateRunResult> {
     const body: Record<string, unknown> = {
       assistant_id: opts.assistantId,
       input: opts.input ?? null,

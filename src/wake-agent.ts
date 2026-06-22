@@ -81,10 +81,7 @@ const EXEC_BACKSTOP_PADDING_MS = 30_000;
  * should still return 200 to LangGraph even if wake fails — errors here
  * must not propagate to the HTTP response path.
  */
-export function wakeAgentAsync(
-  params: WakeAgentParams,
-  deps: WakeAgentDeps = {},
-): Promise<void> {
+export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}): Promise<void> {
   const bin = deps.bin ?? process.env.OPENCLAW_BIN ?? "openclaw";
   const execFile = deps.execFile ?? execFileCb;
   const env = deps.env ?? process.env;
@@ -138,9 +135,7 @@ export function wakeAgentAsync(
           );
           reject(err);
         } else {
-          logger?.info?.(
-            `langgraph-bridge: wakeAgentAsync(${params.agentId}) completed`,
-          );
+          logger?.info?.(`langgraph-bridge: wakeAgentAsync(${params.agentId}) completed`);
           resolve();
         }
       },

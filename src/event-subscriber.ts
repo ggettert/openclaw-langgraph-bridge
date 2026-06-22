@@ -244,20 +244,10 @@ export function classifyStreamFrame(
 
 // Truncation utilities moved to ./text-utils.js and re-exported for
 // backward compatibility with existing import sites and tests.
-export {
-  DEFAULT_SUMMARY_MAX_CHARS,
-  truncateSummary,
-  truncateJsonSummary,
-} from "./text-utils.js";
+export { DEFAULT_SUMMARY_MAX_CHARS, truncateSummary, truncateJsonSummary } from "./text-utils.js";
 import { truncateSummary, truncateJsonSummary } from "./text-utils.js";
 
-const VALID_KINDS = new Set<string>([
-  "status",
-  "milestone",
-  "decision",
-  "terminal",
-  "hitl",
-]);
+const VALID_KINDS = new Set<string>(["status", "milestone", "decision", "terminal", "hitl"]);
 
 /**
  * Translate native fleet `{phase, event, ...}` custom events into Mode B
@@ -285,9 +275,7 @@ function translateFleetVocabulary(
   // Explicit summary preferred over summarizeFleetData heuristic.
   // Truncation is owned by processEvent (see summaryMaxChars).
   const explicitSummary =
-    typeof data.summary === "string" && data.summary.length > 0
-      ? data.summary
-      : null;
+    typeof data.summary === "string" && data.summary.length > 0 ? data.summary : null;
   const summary = explicitSummary ?? summarizeFleetData(data);
 
   if (eventNorm === "started" || eventNorm === "start") {
@@ -325,8 +313,7 @@ function summarizeFleetData(data: Record<string, unknown>): string {
   const techSpec = data.tech_spec_path;
   if (typeof techSpec === "string") parts.push(techSpec);
   const productSpec = data.product_spec_path;
-  if (typeof productSpec === "string" && !parts.includes(productSpec))
-    parts.push(productSpec);
+  if (typeof productSpec === "string" && !parts.includes(productSpec)) parts.push(productSpec);
   const rev = data.revision_count;
   if (typeof rev === "number") parts.push(`rev=${rev}`);
   if (parts.length > 0) return truncateSummary(parts.join(" | "));
@@ -405,25 +392,12 @@ export type StreamingDispatchParams = {
  * cancellation. Returns immediately; the streaming happens in the
  * background.
  */
-export function dispatchAndStream(
-  params: StreamingDispatchParams,
-): AbortController {
-  const {
-    baseUrl,
-    threadId,
-    flowId,
-    assistantId,
-    input,
-    command,
-    metadata,
-    handlers,
-    fetchImpl,
-  } = params;
+export function dispatchAndStream(params: StreamingDispatchParams): AbortController {
+  const { baseUrl, threadId, flowId, assistantId, input, command, metadata, handlers, fetchImpl } =
+    params;
 
   const controller = new AbortController();
-  const url =
-    baseUrl.replace(/\/+$/, "") +
-    `/threads/${encodeURIComponent(threadId)}/runs/stream`;
+  const url = baseUrl.replace(/\/+$/, "") + `/threads/${encodeURIComponent(threadId)}/runs/stream`;
 
   (async () => {
     let sawTerminal = false;

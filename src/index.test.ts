@@ -44,7 +44,9 @@ describe("langgraph_dispatch — dispatch failure tombstones flow (#7)", () => {
       createManaged: vi.fn(() => mockFlow),
       resume: vi.fn(),
       get: vi.fn(() => mockFlow),
-      finish: vi.fn((args: unknown) => { finishedFlows.push(args); }),
+      finish: vi.fn((args: unknown) => {
+        finishedFlows.push(args);
+      }),
       setWaiting: vi.fn(),
       runTask: vi.fn(),
       findLatest: vi.fn(() => null),
@@ -84,9 +86,9 @@ describe("langgraph_dispatch — dispatch failure tombstones flow (#7)", () => {
     expect(dispatchExecute).toBeDefined();
 
     // Mock fetch to reject on createThread (the first network call).
-    globalThis.fetch = vi.fn().mockImplementation(() =>
-      Promise.reject(new Error("connection refused")),
-    ) as typeof fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.reject(new Error("connection refused"))) as typeof fetch;
 
     // Act: call dispatch with a workflow name.
     const resultPromise = dispatchExecute!("tc-1", { workflow: "fleet" });
@@ -98,8 +100,9 @@ describe("langgraph_dispatch — dispatch failure tombstones flow (#7)", () => {
     // `.details` is reliable: `jsonResult(payload)` calls `textResult(text, payload)` which
     // returns `{ content: [...], details: payload }`. The payload is always placed at `.details`
     // by the SDK — this is a stable contract (see openclaw/dist/common*.js `textResult`).
-    expect((result as { details?: { status?: string } }))
-      .toMatchObject({ details: { status: "error" } });
+    expect(result as { details?: { status?: string } }).toMatchObject({
+      details: { status: "error" },
+    });
 
     // Assert: orphaned flow tombstoned — flows.finish was called.
     expect(mockFlowsBinding.finish).toHaveBeenCalledOnce();

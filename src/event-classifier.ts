@@ -18,12 +18,7 @@
  * the labels mean.
  */
 
-export type LanggraphEventKind =
-  | "status"
-  | "milestone"
-  | "decision"
-  | "terminal"
-  | "hitl";
+export type LanggraphEventKind = "status" | "milestone" | "decision" | "terminal" | "hitl";
 
 export type ClassifierAction =
   | "flow-update-only"
