@@ -83,9 +83,7 @@ function parseJson(
   if (typeof raw === "string") {
     try {
       const parsed: unknown = JSON.parse(raw);
-      return parsed && typeof parsed === "object"
-        ? (parsed as Record<string, unknown>)
-        : null;
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
     } catch {
       return null;
     }
@@ -93,10 +91,7 @@ function parseJson(
   return raw;
 }
 
-function pickString(
-  obj: Record<string, unknown>,
-  key: string,
-): string | null {
+function pickString(obj: Record<string, unknown>, key: string): string | null {
   const v = obj[key];
   return typeof v === "string" ? v : null;
 }

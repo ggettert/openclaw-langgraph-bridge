@@ -3,9 +3,7 @@ import { formatInspect } from "./inspect-formatter.js";
 
 describe("formatInspect", () => {
   it("returns a polite no-match message when flow is null", () => {
-    expect(formatInspect({ flow: null })).toBe(
-      "No matching LangGraph flow found in this session.",
-    );
+    expect(formatInspect({ flow: null })).toBe("No matching LangGraph flow found in this session.");
   });
 
   it("formats a running flow with state_json fields", () => {

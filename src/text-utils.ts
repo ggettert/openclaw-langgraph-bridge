@@ -26,10 +26,7 @@ export const DEFAULT_SUMMARY_MAX_CHARS = 4000;
  * treated as cut points — if a value contains no space within the window
  * the cut falls at `maxChars` exactly.
  */
-export function truncateSummary(
-  text: string,
-  maxChars = DEFAULT_SUMMARY_MAX_CHARS,
-): string {
+export function truncateSummary(text: string, maxChars = DEFAULT_SUMMARY_MAX_CHARS): string {
   if (text.length <= maxChars) return text;
   const window = text.slice(0, maxChars);
   const lastSpace = window.lastIndexOf(" ");
@@ -53,10 +50,7 @@ export function truncateSummary(
  * not parsed as JSON downstream. If we ever need parseable output we'd
  * need a real JSON-aware truncator (e.g. walk the AST).
  */
-export function truncateJsonSummary(
-  data: unknown,
-  maxChars = DEFAULT_SUMMARY_MAX_CHARS,
-): string {
+export function truncateJsonSummary(data: unknown, maxChars = DEFAULT_SUMMARY_MAX_CHARS): string {
   try {
     const compact = JSON.stringify(data);
     if (compact.length <= maxChars) return compact;

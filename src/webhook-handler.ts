@@ -36,11 +36,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  actionRequiresWake,
-  classifyEvent,
-  type LanggraphEventKind,
-} from "./event-classifier.js";
+import { actionRequiresWake, classifyEvent, type LanggraphEventKind } from "./event-classifier.js";
 import { wakeAgentAsync } from "./wake-agent.js";
 import { enqueueWake as enqueueWakeDefault } from "./wake-queue.js";
 import { truncateSummary } from "./text-utils.js";
@@ -97,7 +93,10 @@ export type WebhookHandlerDeps = {
    * mocks remain compatible in unit tests that don't need to test the
    * queue ordering behaviour.
    */
-  wake?: (params: Parameters<typeof wakeAgentAsync>[0], deps?: Parameters<typeof wakeAgentAsync>[1]) => void | Promise<void>;
+  wake?: (
+    params: Parameters<typeof wakeAgentAsync>[0],
+    deps?: Parameters<typeof wakeAgentAsync>[1],
+  ) => void | Promise<void>;
   /**
    * Override the queue enqueue function. Defaults to the real
    * `enqueueWake` from wake-queue.ts. Inject a synchronous version in
@@ -204,8 +203,7 @@ export function processEvent(params: {
   // We also suppress the wake path on terminated flows so we don't fire
   // a stale agent turn for a flow the consumer already saw close.
   const flowAlreadyTerminated =
-    typeof currentFlow?.status === "string" &&
-    TERMINAL_FLOW_STATUSES.has(currentFlow.status);
+    typeof currentFlow?.status === "string" && TERMINAL_FLOW_STATUSES.has(currentFlow.status);
   if (flowAlreadyTerminated) {
     deps.logger?.info?.(
       `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status}`,
@@ -277,8 +275,7 @@ export function processEvent(params: {
   //    agent is not woken. decision_only=false restores milestone wakes.
   //    decision/hitl/terminal always wake regardless of this flag.
   if (actionRequiresWake(classification.action)) {
-    const isWakeSuppressed =
-      decisionOnly && classification.action === "wake-light";
+    const isWakeSuppressed = decisionOnly && classification.action === "wake-light";
     if (isWakeSuppressed) {
       deps.logger?.info?.(
         `langgraph-bridge: decision_only=true suppressing milestone wake flow=${body.flow_id}`,
@@ -287,15 +284,13 @@ export function processEvent(params: {
       const doEnqueue = deps.enqueueWake ?? enqueueWakeDefault;
       const wakeImpl = deps.wake ?? wakeAgentAsync;
       const wakeMessage = formatEventText(kind, title, summary, sessionKey);
-      doEnqueue(
-        sessionKey,
-        () =>
-          Promise.resolve(
-            wakeImpl(
-              { agentId: deps.agentId, sessionKey, message: wakeMessage },
-              { logger: deps.logger },
-            ),
+      doEnqueue(sessionKey, () =>
+        Promise.resolve(
+          wakeImpl(
+            { agentId: deps.agentId, sessionKey, message: wakeMessage },
+            { logger: deps.logger },
           ),
+        ),
       );
     }
   }
@@ -342,9 +337,7 @@ export function formatEventText(
  */
 export function buildReplyHint(sessionKey: string): string {
   // Slack threaded channel session: agent:<id>:slack:channel:<ch>:thread:<ts>
-  const slackThread = sessionKey.match(
-    /:slack:channel:([^:]+):thread:([^:]+)/i,
-  );
+  const slackThread = sessionKey.match(/:slack:channel:([^:]+):thread:([^:]+)/i);
   if (slackThread) {
     const [, channel, ts] = slackThread;
     return `[reply-hint] This wake was bound to a Slack thread. Reply IN-THREAD by passing threadId="${ts}" on your next message tool call (channel=${channel}). Default outbound otherwise lands at channel root.`;
@@ -358,10 +351,7 @@ export function buildReplyHint(sessionKey: string): string {
  * (req, res) -> Promise<void>.
  */
 export function buildHandler(deps: WebhookHandlerDeps) {
-  return async function handle(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
+  return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") {
       reply(res, 405, { error: "method_not_allowed" });
       return;
@@ -381,9 +371,7 @@ export function buildHandler(deps: WebhookHandlerDeps) {
       }
     } else {
       // No token configured — refuse rather than allow open ingress.
-      deps.logger?.warn?.(
-        "langgraph-bridge: no callbackToken configured; refusing webhook",
-      );
+      deps.logger?.warn?.("langgraph-bridge: no callbackToken configured; refusing webhook");
       reply(res, 503, { error: "callback_token_not_configured" });
       return;
     }
@@ -464,10 +452,7 @@ export function buildHandler(deps: WebhookHandlerDeps) {
  * IMPORTANT: the FlowRecord includes owner_key + revision; both are read
  * from there to feed processEvent.
  */
-function lookupFlow(
-  deps: WebhookHandlerDeps,
-  flowId: string,
-): Record<string, unknown> | undefined {
+function lookupFlow(deps: WebhookHandlerDeps, flowId: string): Record<string, unknown> | undefined {
   // Bind with a placeholder sessionKey — read-only get() is unaffected
   // by which session is bound.
   const binding = deps.runtime.tasks.managedFlows.bindSession({
@@ -476,20 +461,13 @@ function lookupFlow(
   return binding.get(flowId);
 }
 
-function reply(
-  res: ServerResponse,
-  status: number,
-  payload: Record<string, unknown>,
-): void {
+function reply(res: ServerResponse, status: number, payload: Record<string, unknown>): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(payload));
 }
 
-async function readBodyWithLimit(
-  req: IncomingMessage,
-  limitBytes: number,
-): Promise<string> {
+async function readBodyWithLimit(req: IncomingMessage, limitBytes: number): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     let received = 0;
     const chunks: Buffer[] = [];

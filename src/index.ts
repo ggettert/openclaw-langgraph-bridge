@@ -3,11 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 // The payload is always available at `.details` on the returned object — this is a stable SDK contract.
 import { definePluginEntry, jsonResult } from "openclaw/plugin-sdk/core";
 import { LanggraphClient, LanggraphHttpError } from "./langgraph-client.js";
-import {
-  buildHandler,
-  processEvent,
-  type WebhookHandlerDeps,
-} from "./webhook-handler.js";
+import { buildHandler, processEvent, type WebhookHandlerDeps } from "./webhook-handler.js";
 import { dispatchAndStream } from "./event-subscriber.js";
 import type { IncomingEventBody } from "./webhook-handler.js";
 import { formatInspect } from "./inspect-formatter.js";
@@ -38,8 +34,7 @@ const WEBHOOK_PATH = "/plugins/openclaw-langgraph-bridge/events";
 const ConfigSchema = Type.Object({
   langgraphBaseUrl: Type.Optional(
     Type.String({
-      description:
-        "Base URL of the LangGraph server. Dispatch fails fast when unset.",
+      description: "Base URL of the LangGraph server. Dispatch fails fast when unset.",
       examples: ["http://langgraph.example.local:2024"],
     }),
   ),
@@ -79,7 +74,7 @@ const ConfigSchema = Type.Object({
   summaryMaxChars: Type.Optional(
     Type.Integer({
       description:
-        "Maximum characters for event summaries in wake messages. Summaries longer than this cap are truncated at the last ASCII space (0x20) and a \" \u2026[truncated]\" marker is appended; other whitespace (newlines, tabs) is not treated as a cut point. Default 4000.",
+        'Maximum characters for event summaries in wake messages. Summaries longer than this cap are truncated at the last ASCII space (0x20) and a " \u2026[truncated]" marker is appended; other whitespace (newlines, tabs) is not treated as a cut point. Default 4000.',
       minimum: 100,
       maximum: 50000,
       examples: [4000],
@@ -167,7 +162,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
           parameters: Type.Object({
             flow_id: Type.Optional(
               Type.String({
-                description: "Specific flow id to inspect. Omit to inspect the latest flow in this session.",
+                description:
+                  "Specific flow id to inspect. Omit to inspect the latest flow in this session.",
               }),
             ),
           }),
@@ -277,8 +273,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   message: `Workflow '${workflowId}' not found on the LangGraph server (404).`,
                 });
               }
-              const message =
-                err instanceof Error ? err.message : String(err);
+              const message = err instanceof Error ? err.message : String(err);
               return jsonResult({
                 status: "error" as const,
                 reason: "request_failed",
@@ -319,8 +314,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               });
             }
 
-            const allowlistActive =
-              Array.isArray(allowedWorkflows) && allowedWorkflows.length > 0;
+            const allowlistActive = Array.isArray(allowedWorkflows) && allowedWorkflows.length > 0;
 
             const client = new LanggraphClient({ baseUrl, timeoutMs });
             try {
@@ -331,8 +325,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 name: a.name,
                 description: a.description,
                 allowed: allowlistActive
-                  ? (allowedWorkflows!.includes(a.assistant_id) ||
-                      allowedWorkflows!.includes(a.graph_id))
+                  ? allowedWorkflows!.includes(a.assistant_id) ||
+                    allowedWorkflows!.includes(a.graph_id)
                   : true,
               }));
               return jsonResult({
@@ -341,8 +335,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 allowlist_active: allowlistActive,
               });
             } catch (err: unknown) {
-              const message =
-                err instanceof Error ? err.message : String(err);
+              const message = err instanceof Error ? err.message : String(err);
               return jsonResult({
                 status: "error" as const,
                 reason: "request_failed",
@@ -375,11 +368,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
           // webhook-handler.ts#buildReplyHint. Honour it on outbound sends
           // so milestone/decision/terminal posts land in the right thread.
           parameters: DispatchParams,
-          execute: async (
-            _toolCallId: string,
-            paramsUnknown: unknown,
-            _signal?: AbortSignal,
-          ) => {
+          execute: async (_toolCallId: string, paramsUnknown: unknown, _signal?: AbortSignal) => {
             const params = paramsUnknown as DispatchInput;
 
             if (!baseUrl) {
@@ -394,8 +383,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               return jsonResult({
                 status: "error" as const,
                 reason: "missing_session_key",
-                message:
-                  "langgraph_dispatch requires a session-bound tool context.",
+                message: "langgraph_dispatch requires a session-bound tool context.",
               });
             }
             if (allowed && allowed.length > 0 && !allowed.includes(params.workflow)) {
@@ -586,9 +574,9 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               // the original dispatch error being returned to the agent.
               if (pendingFlowId !== undefined) {
                 try {
-                  const cleanupFlows = handlerDeps.runtime.tasks.managedFlows.bindSession(
-                    { sessionKey },
-                  );
+                  const cleanupFlows = handlerDeps.runtime.tasks.managedFlows.bindSession({
+                    sessionKey,
+                  });
                   // Re-read current revision in case processEvent already bumped
                   // it via runTask/setWaiting during stream setup.
                   const currentRecord = cleanupFlows.get(pendingFlowId) as
@@ -618,8 +606,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 status: "error" as const,
                 reason: "langgraph_dispatch_failed",
                 message,
-                http_status:
-                  err instanceof LanggraphHttpError ? err.status : undefined,
+                http_status: err instanceof LanggraphHttpError ? err.status : undefined,
               });
             }
           },
@@ -656,11 +643,13 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
             "Resume a LangGraph workflow that is currently waiting at a HITL interrupt. Call this when the human's reply contains the answer that the workflow asked for (e.g., 'approve' for a merge_gate). With no flow_id, resumes the latest waiting flow in this session. The payload is whatever the workflow expects to satisfy the interrupt — a plain string works for most cases.",
           parameters: Type.Object({
             payload: Type.Unknown({
-              description: "Resume payload. Usually the human's reply as a string. Can also be a structured object if the workflow expects one.",
+              description:
+                "Resume payload. Usually the human's reply as a string. Can also be a structured object if the workflow expects one.",
             }),
             flow_id: Type.Optional(
               Type.String({
-                description: "Specific waiting flow to resume. Omit to resume the latest waiting flow in this session.",
+                description:
+                  "Specific waiting flow to resume. Omit to resume the latest waiting flow in this session.",
               }),
             ),
           }),
@@ -680,20 +669,24 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 sessionKey,
               });
               const candidate = params.flow_id
-                ? (flows.get(params.flow_id) as unknown as {
-                    flowId?: string;
-                    status?: string;
-                    revision?: number;
-                    stateJson?: Record<string, unknown> | string | null;
-                    waitJson?: Record<string, unknown> | string | null;
-                  } | undefined)
-                : (flows.findLatest() as unknown as {
-                    flowId?: string;
-                    status?: string;
-                    revision?: number;
-                    stateJson?: Record<string, unknown> | string | null;
-                    waitJson?: Record<string, unknown> | string | null;
-                  } | undefined);
+                ? (flows.get(params.flow_id) as unknown as
+                    | {
+                        flowId?: string;
+                        status?: string;
+                        revision?: number;
+                        stateJson?: Record<string, unknown> | string | null;
+                        waitJson?: Record<string, unknown> | string | null;
+                      }
+                    | undefined)
+                : (flows.findLatest() as unknown as
+                    | {
+                        flowId?: string;
+                        status?: string;
+                        revision?: number;
+                        stateJson?: Record<string, unknown> | string | null;
+                        waitJson?: Record<string, unknown> | string | null;
+                      }
+                    | undefined);
               if (!candidate) {
                 return jsonResult({
                   status: "error" as const,
@@ -715,8 +708,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               const threadId = stateJson.langgraph_thread_id as string | undefined;
               const workflow = stateJson.workflow as string | undefined;
               const baseUrl =
-                (stateJson.langgraph_base_url as string | undefined) ??
-                config.langgraphBaseUrl;
+                (stateJson.langgraph_base_url as string | undefined) ?? config.langgraphBaseUrl;
               if (!threadId || !workflow || !baseUrl) {
                 return jsonResult({
                   status: "error" as const,
@@ -832,12 +824,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               const resumeRunId = await runIdPromise;
 
               // Transition flow waiting -> running. Re-read current revision.
-              const liveFlow = flows.get(candidate.flowId!) as
-                | { revision?: number }
-                | undefined;
-              const liveRevision = Number(
-                liveFlow?.revision ?? candidate.revision ?? 0,
-              );
+              const liveFlow = flows.get(candidate.flowId!) as { revision?: number } | undefined;
+              const liveRevision = Number(liveFlow?.revision ?? candidate.revision ?? 0);
               flows.resume({
                 flowId: candidate.flowId!,
                 expectedRevision: liveRevision,
@@ -864,8 +852,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 flow_id: candidate.flowId,
                 langgraph_thread_id: threadId,
                 resume_run_id: resumeRunId,
-                note:
-                  "Flow is back to running and SSE subscriber is attached. Subsequent events will surface in this session as they fire.",
+                note: "Flow is back to running and SSE subscriber is attached. Subsequent events will surface in this session as they fire.",
               });
             } catch (err: unknown) {
               const m = err instanceof Error ? err.message : String(err);
@@ -1082,9 +1069,7 @@ function parseMaybeJson(
   if (typeof raw === "string") {
     try {
       const parsed: unknown = JSON.parse(raw);
-      return parsed && typeof parsed === "object"
-        ? (parsed as Record<string, unknown>)
-        : null;
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
     } catch {
       return null;
     }

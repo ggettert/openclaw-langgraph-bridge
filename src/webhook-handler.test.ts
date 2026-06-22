@@ -11,13 +11,11 @@ function makeDeps() {
     finish: vi.fn<(...args: AnyArgs) => unknown>(),
     // decision_only=false so milestone tests that assert wake behaviour work.
     // Tests that specifically test decision_only=true use makeDepsWithDecisionOnly().
-    get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-      () => ({
-        owner_key: "agent:main:dm:user",
-        revision: 1,
-        stateJson: { decision_only: false },
-      }),
-    ),
+    get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
+      owner_key: "agent:main:dm:user",
+      revision: 1,
+      stateJson: { decision_only: false },
+    })),
     wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
   };
   const deps: WebhookHandlerDeps = {
@@ -273,9 +271,11 @@ describe("processEvent — FIFO wake ordering (real queue)", () => {
       await d[idx]!.promise;
     });
 
-    const get = vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-      () => ({ owner_key: sessionKey, revision: 1, stateJson: { decision_only: false } }),
-    );
+    const get = vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
+      owner_key: sessionKey,
+      revision: 1,
+      stateJson: { decision_only: false },
+    }));
     const deps: WebhookHandlerDeps = {
       expectedToken: "secret",
       pluginId: "openclaw-langgraph-bridge",
@@ -331,8 +331,7 @@ describe("processEvent — reply hint from sessionKey", () => {
     const { deps, calls } = makeDeps();
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "coder:done" },
-      sessionKey:
-        "agent:main:slack:channel:c0ba88ychfz:thread:1781634334.310769",
+      sessionKey: "agent:main:slack:channel:c0ba88ychfz:thread:1781634334.310769",
       flowRevision: 1,
       deps,
     });
@@ -340,9 +339,7 @@ describe("processEvent — reply hint from sessionKey", () => {
     expect(wakeArgs.message).toMatch(/^\[reply-hint\]/);
     expect(wakeArgs.message).toContain('threadId="1781634334.310769"');
     expect(wakeArgs.message).toContain("channel=c0ba88ychfz");
-    expect(wakeArgs.message).toMatch(
-      /\[langgraph:milestone\] coder:done/,
-    );
+    expect(wakeArgs.message).toMatch(/\[langgraph:milestone\] coder:done/);
   });
 
   it("omits the hint for plain DM session keys", () => {
@@ -380,13 +377,11 @@ describe("processEvent — decision_only flag (#6)", () => {
       setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
       finish: vi.fn<(...args: AnyArgs) => unknown>(),
       // Embed decision_only in stateJson so processEvent can read it.
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-        () => ({
-          owner_key: "agent:main:dm:user",
-          revision: 1,
-          stateJson: { workflow: "fleet", decision_only: decisionOnly },
-        }),
-      ),
+      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
+        owner_key: "agent:main:dm:user",
+        revision: 1,
+        stateJson: { workflow: "fleet", decision_only: decisionOnly },
+      })),
       wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
     };
     const deps: WebhookHandlerDeps = {
@@ -406,7 +401,9 @@ describe("processEvent — decision_only flag (#6)", () => {
         },
       },
       wake: calls.wake,
-      enqueueWake: (_key, run) => { void run(); },
+      enqueueWake: (_key, run) => {
+        void run();
+      },
     };
     return { deps, calls };
   }
@@ -421,7 +418,7 @@ describe("processEvent — decision_only flag (#6)", () => {
     });
     expect(result).toEqual({ status: "ok", action: "wake-light" });
     expect(calls.runTask).toHaveBeenCalledOnce(); // flow state still updated
-    expect(calls.wake).not.toHaveBeenCalled();   // but no wake
+    expect(calls.wake).not.toHaveBeenCalled(); // but no wake
   });
 
   it("milestone + decision_only=false → updates flow state AND wakes", () => {
@@ -503,7 +500,9 @@ describe("processEvent — decision_only flag (#6)", () => {
         },
       },
       wake: calls.wake,
-      enqueueWake: (_key, run) => { void run(); },
+      enqueueWake: (_key, run) => {
+        void run();
+      },
     };
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
@@ -524,13 +523,11 @@ describe("processEvent — decision_only flag (#6)", () => {
       runTask: vi.fn<(...args: AnyArgs) => unknown>(),
       setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
       finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-        () => ({
-          owner_key: "agent:main:dm:user",
-          revision: 1,
-          stateJson: { workflow: "fleet" }, // stateJson present but no decision_only key
-        }),
-      ),
+      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
+        owner_key: "agent:main:dm:user",
+        revision: 1,
+        stateJson: { workflow: "fleet" }, // stateJson present but no decision_only key
+      })),
       wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
     };
     const deps: WebhookHandlerDeps = {
@@ -550,7 +547,9 @@ describe("processEvent — decision_only flag (#6)", () => {
         },
       },
       wake: calls.wake,
-      enqueueWake: (_key, run) => { void run(); },
+      enqueueWake: (_key, run) => {
+        void run();
+      },
     };
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
@@ -570,13 +569,11 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
       runTask: vi.fn<(...args: AnyArgs) => unknown>(),
       setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
       finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-        () => ({
-          owner_key: "agent:main:dm:user",
-          revision: 5,
-          status: flowStatus,
-        }),
-      ),
+      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
+        owner_key: "agent:main:dm:user",
+        revision: 5,
+        status: flowStatus,
+      })),
       wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
     };
     const deps: WebhookHandlerDeps = {
@@ -713,7 +710,11 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
       setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
       finish: vi.fn<(...args: AnyArgs) => unknown>(),
       get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-        () => ({ owner_key: "agent:main:dm:user", revision: 1, stateJson: { decision_only: false } }),
+        () => ({
+          owner_key: "agent:main:dm:user",
+          revision: 1,
+          stateJson: { decision_only: false },
+        }),
         // no status field
       ),
       wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),

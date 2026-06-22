@@ -88,7 +88,7 @@ describe("isPhaseEventPayload", () => {
     expect(
       isPhaseEventPayload({
         phase: "coder",
-        event: "progress",       // not in started|finished|failed
+        event: "progress", // not in started|finished|failed
         ticket_id: "BINGO-42",
         summary: "halfway there",
       }),

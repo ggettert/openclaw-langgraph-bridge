@@ -53,11 +53,7 @@ describe("classifyStreamFrame — metadata", () => {
   });
 
   it("skips metadata frame with no run_id", () => {
-    const r = classifyStreamFrame(
-      { event: "metadata", data: { attempt: 1 } },
-      "flow-1",
-      0,
-    );
+    const r = classifyStreamFrame({ event: "metadata", data: { attempt: 1 } }, "flow-1", 0);
     expect(r.kind).toBe("skip");
   });
 });
@@ -84,11 +80,7 @@ describe("classifyStreamFrame — error", () => {
 describe("classifyStreamFrame — updates", () => {
   it("raw {node: delta} body becomes milestone", () => {
     const body = emit(
-      classifyStreamFrame(
-        { event: "updates", data: { coder: { tokens: 42 } } },
-        "flow-1",
-        2,
-      ),
+      classifyStreamFrame({ event: "updates", data: { coder: { tokens: 42 } } }, "flow-1", 2),
     );
     expect(body.kind).toBe("milestone");
     expect(body.title).toBe("node:coder");
@@ -120,9 +112,7 @@ describe("classifyStreamFrame — updates", () => {
         {
           event: "updates",
           data: {
-            __interrupt__: [
-              { id: "int-1", value: { prompt: "approve merge?" } },
-            ],
+            __interrupt__: [{ id: "int-1", value: { prompt: "approve merge?" } }],
           },
         },
         "flow-1",
@@ -165,11 +155,7 @@ describe("classifyStreamFrame — updates", () => {
   });
 
   it("empty updates payload is skipped", () => {
-    const r = classifyStreamFrame(
-      { event: "updates", data: {} },
-      "flow-1",
-      0,
-    );
+    const r = classifyStreamFrame({ event: "updates", data: {} }, "flow-1", 0);
     expect(r.kind).toBe("skip");
   });
 });
@@ -327,11 +313,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
 
   it("custom without kind degrades to status", () => {
     const body = emit(
-      classifyStreamFrame(
-        { event: "custom", data: { progress: 50 } },
-        "flow-1",
-        10,
-      ),
+      classifyStreamFrame({ event: "custom", data: { progress: 50 } }, "flow-1", 10),
     );
     expect(body.kind).toBe("status");
     expect(body.summary).toContain("progress");
@@ -570,10 +552,7 @@ describe("truncateJsonSummary", () => {
     // A second guard: the truncated result should never look like `"some/path/
     // (i.e. an open quote that was never closed before the truncation marker).
     const data = Object.fromEntries(
-      Array.from({ length: 20 }, (_, i) => [
-        `key${i}`,
-        "v".repeat(500),
-      ]),
+      Array.from({ length: 20 }, (_, i) => [`key${i}`, "v".repeat(500)]),
     );
     const result = truncateJsonSummary(data, 1000);
     expect(result.endsWith(" \u2026[truncated]")).toBe(true);
@@ -612,15 +591,9 @@ describe("truncateJsonSummary", () => {
 
 describe("classifyStreamFrame — skip", () => {
   it("messages, values, events are skipped", () => {
-    expect(
-      classifyStreamFrame({ event: "messages", data: {} }, "f", 0).kind,
-    ).toBe("skip");
-    expect(
-      classifyStreamFrame({ event: "values", data: {} }, "f", 0).kind,
-    ).toBe("skip");
-    expect(
-      classifyStreamFrame({ event: "events", data: {} }, "f", 0).kind,
-    ).toBe("skip");
+    expect(classifyStreamFrame({ event: "messages", data: {} }, "f", 0).kind).toBe("skip");
+    expect(classifyStreamFrame({ event: "values", data: {} }, "f", 0).kind).toBe("skip");
+    expect(classifyStreamFrame({ event: "events", data: {} }, "f", 0).kind).toBe("skip");
   });
 });
 
