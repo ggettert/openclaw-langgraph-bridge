@@ -2,6 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/openclaw-langgraph-bridge.svg)](https://www.npmjs.com/package/openclaw-langgraph-bridge)
 [![CI](https://github.com/ggettert/openclaw-langgraph-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/ggettert/openclaw-langgraph-bridge/actions/workflows/ci.yml)
+<!-- Coverage badge: hardcoded from last local run. TODO: wire to a coverage service (codecov/coveralls) in a follow-up PR -->
+[![Coverage](https://img.shields.io/badge/coverage-63%25-yellow.svg)](./coverage)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 An [OpenClaw](https://openclaw.dev) plugin that lets any agent drive [LangGraph](https://github.com/langchain-ai/langgraph) workflows from inside a conversation thread — with per-thread isolation, live event streaming, HITL gate support, and proactive wake-back when workflows emit milestones or reach a terminal state.

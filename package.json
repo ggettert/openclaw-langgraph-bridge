@@ -26,7 +26,11 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "lint": "prettier --check . && eslint .",
+    "lint:fix": "prettier --write . && eslint . --fix",
+    "test": "npm run lint && vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
     "smoke": "node --import tsx scripts/smoke-langgraph.ts",
     "smoke:webhook": "node --import tsx scripts/smoke-webhook.ts",
     "smoke:streaming": "node --import tsx scripts/smoke-streaming.ts"
@@ -43,9 +47,15 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
+    "@vitest/coverage-v8": "^3.2.6",
+    "eslint": "^10.5.0",
     "openclaw": "latest",
+    "prettier": "^3.8.4",
     "tsx": "^4.22.4",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.62.0",
     "vitest": "^3.2.0"
   },
   "openclaw": {
