@@ -97,9 +97,7 @@ export function makeFakeWake(): {
   const calls: WakeCall[] = [];
   const wake = vi.fn((params: WakeAgentParams, deps?: unknown) => {
     calls.push({ params, deps });
-  }) as unknown as (params: WakeAgentParams, deps?: unknown) => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (wake as any).calls = calls;
+  });
   return { wake, calls };
 }
 
