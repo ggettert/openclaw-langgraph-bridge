@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LanggraphClient, LanggraphHttpError, type LanggraphAssistant } from "./langgraph-client.js";
+import {
+  LanggraphClient,
+  LanggraphHttpError,
+  type LanggraphAssistant,
+} from "./langgraph-client.js";
 
 describe("LanggraphClient", () => {
   const originalFetch = globalThis.fetch;
@@ -41,14 +45,11 @@ describe("LanggraphClient", () => {
   });
 
   it("createRun sends assistant_id + metadata and returns run_id", async () => {
-    let captured: { url?: string; body?: unknown } = {};
+    const captured: { url?: string; body?: unknown } = {};
     mockFetch(async (input, init) => {
       captured.url = typeof input === "string" ? input : (input as Request).url;
       captured.body = init?.body ? JSON.parse(init.body as string) : undefined;
-      return new Response(
-        JSON.stringify({ run_id: "r-9", thread_id: "t-7" }),
-        { status: 200 },
-      );
+      return new Response(JSON.stringify({ run_id: "r-9", thread_id: "t-7" }), { status: 200 });
     });
     const client = new LanggraphClient({ baseUrl: "http://lg" });
     const result = await client.createRun("t-7", {
@@ -62,7 +63,11 @@ describe("LanggraphClient", () => {
       input: { hello: "world" },
       metadata: { openclaw_flow_id: "f-1" },
     });
-    expect(result).toEqual({ threadId: "t-7", runId: "r-9", raw: { run_id: "r-9", thread_id: "t-7" } });
+    expect(result).toEqual({
+      threadId: "t-7",
+      runId: "r-9",
+      raw: { run_id: "r-9", thread_id: "t-7" },
+    });
   });
 
   it("throws LanggraphHttpError on non-2xx", async () => {
@@ -74,9 +79,9 @@ describe("LanggraphClient", () => {
   it("createRun throws when run_id missing", async () => {
     mockFetch(async () => new Response(JSON.stringify({}), { status: 200 }));
     const client = new LanggraphClient({ baseUrl: "http://lg" });
-    await expect(
-      client.createRun("t-1", { assistantId: "fleet" }),
-    ).rejects.toBeInstanceOf(LanggraphHttpError);
+    await expect(client.createRun("t-1", { assistantId: "fleet" })).rejects.toBeInstanceOf(
+      LanggraphHttpError,
+    );
   });
 
   describe("getAssistantSchemas", () => {
@@ -116,22 +121,19 @@ describe("LanggraphClient", () => {
       });
       const client = new LanggraphClient({ baseUrl: "http://lg" });
       await client.getAssistantSchemas("6d5d4365-62fd-59e2-807b-539d8f85d26e");
-      expect(receivedUrl).toBe(
-        "http://lg/assistants/6d5d4365-62fd-59e2-807b-539d8f85d26e/schemas",
-      );
+      expect(receivedUrl).toBe("http://lg/assistants/6d5d4365-62fd-59e2-807b-539d8f85d26e/schemas");
     });
 
     it("throws LanggraphHttpError with status 404 when workflow not found", async () => {
-      mockFetch(async () =>
-        new Response(JSON.stringify({ detail: "Assistant not found" }), {
-          status: 404,
-          statusText: "Not Found",
-        }),
+      mockFetch(
+        async () =>
+          new Response(JSON.stringify({ detail: "Assistant not found" }), {
+            status: 404,
+            statusText: "Not Found",
+          }),
       );
       const client = new LanggraphClient({ baseUrl: "http://lg" });
-      const err = await client
-        .getAssistantSchemas("no-such-workflow")
-        .catch((e: unknown) => e);
+      const err = await client.getAssistantSchemas("no-such-workflow").catch((e: unknown) => e);
       expect(err).toBeInstanceOf(LanggraphHttpError);
       expect((err as LanggraphHttpError).status).toBe(404);
     });
@@ -141,9 +143,7 @@ describe("LanggraphClient", () => {
         throw new TypeError("fetch failed");
       });
       const client = new LanggraphClient({ baseUrl: "http://lg" });
-      await expect(
-        client.getAssistantSchemas("fleet"),
-      ).rejects.toThrow("fetch failed");
+      await expect(client.getAssistantSchemas("fleet")).rejects.toThrow("fetch failed");
     });
 
     it("aborts and rejects on timeout", async () => {
@@ -186,9 +186,7 @@ describe("LanggraphClient", () => {
     ];
 
     it("returns parsed array of assistants", async () => {
-      mockFetch(async () =>
-        new Response(JSON.stringify(mockAssistants), { status: 200 }),
-      );
+      mockFetch(async () => new Response(JSON.stringify(mockAssistants), { status: 200 }));
       const client = new LanggraphClient({ baseUrl: "http://lg" });
       const result = await client.searchAssistants();
       expect(result).toEqual(mockAssistants);
@@ -198,7 +196,7 @@ describe("LanggraphClient", () => {
     });
 
     it("sends POST to /assistants/search with correct body including limit", async () => {
-      let captured: { url?: string; method?: string; body?: unknown } = {};
+      const captured: { url?: string; method?: string; body?: unknown } = {};
       mockFetch(async (input, init) => {
         captured.url = typeof input === "string" ? input : (input as Request).url;
         captured.method = init?.method;
@@ -224,11 +222,12 @@ describe("LanggraphClient", () => {
     });
 
     it("throws LanggraphHttpError on 5xx", async () => {
-      mockFetch(async () =>
-        new Response("Internal Server Error", {
-          status: 500,
-          statusText: "Internal Server Error",
-        }),
+      mockFetch(
+        async () =>
+          new Response("Internal Server Error", {
+            status: 500,
+            statusText: "Internal Server Error",
+          }),
       );
       const client = new LanggraphClient({ baseUrl: "http://lg" });
       const err = await client.searchAssistants().catch((e: unknown) => e);

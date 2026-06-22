@@ -41,10 +41,7 @@ const draining = new Set<string>();
  * Jobs for the same `sessionKey` are executed in FIFO order. Jobs for
  * different keys execute concurrently (independent queues).
  */
-export function enqueueWake(
-  sessionKey: string,
-  run: () => Promise<void>,
-): void {
+export function enqueueWake(sessionKey: string, run: () => Promise<void>): void {
   const q = queues.get(sessionKey) ?? [];
   q.push({ run });
   queues.set(sessionKey, q);

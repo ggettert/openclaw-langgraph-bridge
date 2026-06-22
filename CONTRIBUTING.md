@@ -32,6 +32,7 @@ The plugin talks to a LangGraph server. For local testing against a real graph, 
 ## Test Conventions
 
 - Test runner: **[vitest](https://vitest.dev)** (`npm test` or `npx vitest run`)
+- `npm run test:watch` runs vitest in interactive watch mode for iterative dev.
 - One `.test.ts` file per source file (e.g. `src/webhook-handler.test.ts` covers `src/webhook-handler.ts`)
 - Mock I/O at the boundary — subprocess/fs/fetch calls are mocked; no real network in unit tests
 - `processEvent` and classifiers are pure functions — test them directly without spinning up the HTTP layer
