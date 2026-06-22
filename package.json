@@ -21,7 +21,7 @@
     "workflows"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "private": true,
   "scripts": {
@@ -41,9 +41,6 @@
   "peerDependencies": {
     "openclaw": ">=2026.5.17"
   },
-  "dependencies": {
-    "typebox": "^1.1.38"
-  },
   "devDependencies": {
     "@types/node": "^25.9.3",
     "openclaw": "latest",
@@ -55,5 +52,8 @@
     "extensions": [
       "./dist/index.js"
     ]
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.49"
   }
 }

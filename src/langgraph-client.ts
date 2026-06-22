@@ -196,29 +196,11 @@ export class LanggraphClient {
     return body.thread_id;
   }
 
-  /**
-   * Resume an interrupted run by creating a new run on the same thread
-   * with a `Command(resume=...)` input. LangGraph reads the resume
-   * payload, advances the interrupted node, and continues.
-   *
-   * The wire shape for `Command(resume=...)` over HTTP is
-   * `{"command": {"resume": <payload>}}` as the run input.
-   */
-  async resumeRun(
-    threadId: string,
-    assistantId: string,
-    resumePayload: unknown,
-    opts?: { metadata?: Record<string, unknown> },
-  ): Promise<LanggraphCreateRunResult> {
-    return this.createRun(threadId, {
-      assistantId,
-      input: { command: { resume: resumePayload } } as unknown as Record<
-        string,
-        unknown
-      >,
-      metadata: opts?.metadata,
-    });
-  }
+  // NOTE: resumeRun() was deleted in #8 (OSS readiness pass). It had an
+  // incorrect wire format (nested `input.command` instead of top-level
+  // `command`) and was dead code after Phase 5 routed resume through
+  // dispatchAndStream. Resume is now handled via dispatchAndStream with
+  // a `command` field — see src/index.ts, the langgraph_resume tool.
 
   async createRun(threadId: string, opts: LanggraphCreateRunOptions): Promise<LanggraphCreateRunResult> {
     const body: Record<string, unknown> = {

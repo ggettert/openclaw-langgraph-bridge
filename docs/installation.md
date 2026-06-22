@@ -1,136 +1,138 @@
 # Installation — openclaw-langgraph-bridge
 
-Per-bot install runbook for v0.13.0+. Takes a working OpenClaw gateway and adds the bridge plugin so the agent can dispatch LangGraph workflows and be woken on milestones / HITL / terminal events in-thread.
+Per-bot install runbook. Takes a working OpenClaw gateway and adds the bridge plugin so the agent can dispatch LangGraph workflows and be woken on milestones, HITL gates, and terminal events in the originating conversation thread.
 
-**Audience:** Bot operator with shell access to the bot host. Walks through fresh install on a bot that has never had the plugin before.
+**Audience:** Bot operator with shell access to the bot host.
 
-**Time:** 5-10 minutes for a clean install. Add 5 min if you need to configure auth tokens.
+**Time:** 5–10 minutes for a clean install.
 
 ---
 
 ## Supported channels
 
-*The plugin is tested against Slack only.* Other OpenClaw channels (Discord, Telegram, WhatsApp, Signal, IRC, etc.) are *theoretically* supported because:
+*The plugin is tested against Slack only.* Other OpenClaw channels (Discord, Telegram, WhatsApp, etc.) are *theoretically* supported because:
 
-- The wire protocol (LangGraph dispatch / SSE event stream / webhook handler / wake-via-CLI) is channel-agnostic
-- The `openclaw agent --session-key` wake primitive routes wakes based on whatever channel the originating session was bound to
-- The only Slack-specific code is the `[reply-hint]` line emitted in wake messages for threaded channel sessions (`buildReplyHint` in `src/webhook-handler.ts`)
+- The wire protocol (LangGraph dispatch / SSE event stream / webhook handler / wake-via-CLI) is channel-agnostic.
+- The `openclaw agent --session-key` wake primitive routes to whichever channel the originating session was bound to.
+- The only Slack-specific code is the `[reply-hint]` line emitted in wake messages for threaded channel sessions.
 
-### Channel compatibility status
+### Channel compatibility
 
 | Channel | Status | Notes |
 |---|---|---|
 | Slack DM | ✅ Tested | Validated in production |
-| Slack channel thread | ✅ Tested | Validated in a Slack channel thread |
-| Discord DM | 🟡 Untested | Wake should work; replies land in DM by default so no reply-hint needed |
+| Slack channel thread | ✅ Tested | Validated in production |
+| Discord DM | 🟡 Untested | Wake should work; no reply-hint needed for DMs |
 | Discord guild thread | 🟡 Untested | Wake should work; reply-hint needs a Discord-shaped session-key branch (~5 LOC) |
-| Telegram (DM + topics) | 🟡 Untested | Wake should work; reply-hint needs a Telegram-shaped session-key branch |
-| Other OpenClaw channels (WhatsApp, Signal, IRC, etc.) | 🟡 Untested | Same shape as the above |
+| Telegram | 🟡 Untested | Wake should work; same reply-hint caveat |
+| Other channels | 🟡 Untested | Same shape as above |
 
-**Want to use this plugin with a non-Slack channel?** It will likely work for the dispatch + wake path, but the reply may land at channel root instead of in-thread. Open an issue + PR with the per-channel `buildReplyHint` branch and we'll merge.
+**Want to use this plugin with a non-Slack channel?** Open an issue and PR with the per-channel `buildReplyHint` branch and we'll merge.
 
 ---
 
 ## Prerequisites
 
-Verify each before starting. Don't proceed if any are missing.
+Verify each before starting.
 
-1. **OpenClaw gateway running and healthy:**
-   ```bash
-   sudo systemctl status openclaw-gateway --no-pager | head -5
-   # Active: active (running)
-   ```
-2. **Gateway version compatible** (plugin peerDep is `openclaw >= 2026.5.17`):
+1. **OpenClaw gateway** running and healthy (version `2026.5.17` or later):
    ```bash
    openclaw --version
+   # v2026.5.17 or higher
    ```
-3. **Node 22+ available** (for build-from-source path; not needed for tarball path):
+2. **Node 22+** (needed for build-from-source path only; not required for the tarball path):
    ```bash
    node --version  # v22.x.x
    ```
-4. **`gh` CLI authenticated** to a token with `read:packages` and read access to `ggettert/openclaw-langgraph-bridge`.
-5. **Reachable LangGraph server URL** — the URL the plugin will dispatch to. Note this; you'll need it for config. See [Setting up a LangGraph server](#setting-up-a-langgraph-server) below if you don't have one yet.
-6. **A pre-shared `callbackToken`** — a string the LangGraph workflow will include as `Authorization: Bearer <token>` on inbound webhook POSTs. Generate one if you don't have it:
+3. **A reachable LangGraph server** — the URL the plugin will dispatch to. Options:
+   - `langgraph dev` for local testing against a local workflow
+   - [Aegra](https://docs.aegra.dev) for self-hosted production
+   - [LangSmith Platform](https://docs.smith.langchain.com/langgraph-platform) for cloud-managed (note: LangSmith requires an API key, tracked as future issue #29 — not yet supported by this plugin)
+4. **A `callbackToken`** — a pre-shared secret the plugin uses to authenticate inbound webhook POSTs. Generate one if you don't have one:
    ```bash
    openssl rand -hex 32
    ```
-7. **`callbackPublicBaseUrl`** (if you want webhooks, recommended) — the URL the LangGraph server will reach this bot at. Plugin appends `/plugins/openclaw-langgraph-bridge/events`. Find your gateway's IP + port and record it here.
+5. **`callbackPublicBaseUrl`** (recommended) — the public URL the LangGraph server can POST events to. The plugin appends `/plugins/openclaw-langgraph-bridge/events`. Without it the plugin still works via SSE only, but webhook-based wake events won't have a target.
 
 ---
 
-## Setting up a LangGraph server
+## Install paths
 
-The plugin requires a running LangGraph server that your bot host can reach over HTTP. You have two main options:
+### Path A: GitHub release tarball (recommended)
 
-**Option A — LangGraph Cloud (managed)**
-The quickest path to a running server. See the [LangGraph Cloud quick start](https://langchain-ai.github.io/langgraph/cloud/quick_start/) for setup instructions. After provisioning, set `langgraphBaseUrl` to the deployment URL provided in the LangGraph Platform dashboard.
-
-**Option B — Self-hosted with Aegra**
-[Aegra](https://docs.aegra.dev) is a self-hosted, drop-in-compatible LangGraph server. It uses the same LangGraph SDK and Python graph definitions, but runs on your own infrastructure without a LangSmith subscription. It adds Postgres for durable checkpointed state, Redis for job queues and SSE pub/sub, and OTLP observability integration. This is the recommended path if you want full infrastructure control or have data-residency requirements.
-
-Either option produces a URL of the form `http://<host>:<port>` — that becomes your `langgraphBaseUrl`.
-
----
-
-## Path A: install from release tarball (recommended)
-
-This is the production path. Skip Path B unless you specifically want to build from source.
-
-### A1. Download and extract
-
-Download the release tarball:
+This is the production path. Download the latest release tarball and extract into the extensions directory:
 
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
-gh release download v0.13.0 \
+
+# Download the latest release tarball (no auth required — public repo)
+LATEST_TAG=$(gh release list --repo ggettert/openclaw-langgraph-bridge --limit 1 --json tagName --jq '.[0].tagName')
+gh release download "$LATEST_TAG" \
   --repo ggettert/openclaw-langgraph-bridge \
-  --pattern 'openclaw-langgraph-bridge-v0.13.0.tar.gz' \
+  --pattern 'openclaw-langgraph-bridge-*.tar.gz' \
   --output /tmp/oclb.tgz
+
+# To pin a specific version, replace $LATEST_TAG with e.g. v0.13.0
+
 tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
 rm /tmp/oclb.tgz
 ```
 
-The tarball is **flat** — extracts `dist/`, `openclaw.plugin.json`, `package.json`, `README.md` directly into the target dir. No leading versioned folder.
+The tarball extracts `dist/`, `node_modules/` (runtime deps only), `openclaw.plugin.json`, `package.json`, `README.md`, `docs/`, and `skills/` directly into the target directory.
 
-### A2. Verify the extracted files
+Verify:
 
 ```bash
 ls ~/.openclaw/extensions/openclaw-langgraph-bridge
-# Expected: dist/  openclaw.plugin.json  package.json  README.md
-grep '"version"' ~/.openclaw/extensions/openclaw-langgraph-bridge/openclaw.plugin.json
-# Expected: "version": "0.13.0",
+# dist/  node_modules/  openclaw.plugin.json  package.json  README.md  docs/  skills/
+
+INSTALLED_VERSION=$(openclaw plugins inspect openclaw-langgraph-bridge --json | jq -r '.version')
+[ -n "$INSTALLED_VERSION" ] || { echo "ERROR: plugin not loaded"; exit 1; }
+echo "Installed version: $INSTALLED_VERSION"
+# Optionally verify it matches the tag we downloaded:
+[ "v$INSTALLED_VERSION" = "$LATEST_TAG" ] || echo "WARN: installed version $INSTALLED_VERSION does not match downloaded $LATEST_TAG"
 ```
 
-Skip to **Step 3 (configure)** below.
+### Path B: git source (pinned tag)
 
----
-
-## Path B: build from source
-
-For development bots or when you need a specific commit not yet released.
+For development bots or when you need a specific commit not yet released:
 
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
 cd "$EXT_DIR"
-gh repo clone ggettert/openclaw-langgraph-bridge . -- --depth=1
+git clone --depth=1 --branch v1.0.0 https://github.com/ggettert/openclaw-langgraph-bridge.git .
 npm ci
 npm run build
-npm test  # should report 85+ passing
+npm test  # expect 146 passing
 ```
 
-The repo's source files end up in `$EXT_DIR` directly. The gateway loads `dist/index.js` per `package.json`'s `openclaw.extensions` field, so source-level files coexisting in the same dir is fine.
+### Path C: From npm (future)
+
+> **Note:** The package is currently `private: true` in `package.json` and has not been published to npm. When published:
+>
+> ```bash
+> openclaw plugins install npm:openclaw-langgraph-bridge
+> ```
+
+### Path D: From ClawHub (future)
+
+> **Note:** Not yet published to ClawHub. When available:
+>
+> ```bash
+> openclaw plugins install clawhub:ggettert/openclaw-langgraph-bridge
+> ```
 
 ---
 
-## Step 3. Configure the plugin
+## Configure the plugin
 
-Edit `~/.openclaw/openclaw.json` to register and enable the plugin. The two places that need changes:
+Edit `~/.openclaw/openclaw.json` to register and enable the plugin.
 
-### 3a. Register a config block
+### Add the config block
 
-Add or merge under the `plugins.entries.openclaw-langgraph-bridge` path:
+Under `plugins.entries.openclaw-langgraph-bridge`:
 
 ```json
 {
@@ -152,42 +154,67 @@ Add or merge under the `plugins.entries.openclaw-langgraph-bridge` path:
 }
 ```
 
-> **Optional hardening: `allowedWorkflows`.** If your bot should only be able to drive specific LangGraph workflows, set this to an allowlist of workflow ids (graph ids or assistant UUIDs). When set, `langgraph_dispatch`, `langgraph_inspect_workflow`, and `langgraph_list_workflows` enforce it — disallowed workflows return `{ status: "error", reason: "workflow_not_allowed" }`. For `langgraph_list_workflows`, blocked workflows are still visible but annotated with `allowed: false`. Leave empty (`[]`) or unset to permit all workflows on the configured LangGraph server.
->
-> Example: `"allowedWorkflows": ["fleet", "pr_review"]` — the bot can dispatch those two workflows; any other id is refused.
+### Config reference
 
-Key-by-key:
+| Key | Required | Default | Description |
+|---|---|---|---|
+| `langgraphBaseUrl` | ✓ | — | Base URL of your LangGraph server, e.g. `http://localhost:2024`. |
+| `callbackToken` | ✓ | — | Pre-shared secret. Inbound webhook POSTs must supply `Authorization: Bearer <token>`. Generate with `openssl rand -hex 32`. |
+| `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server POSTs events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events`. Do **not** include the path here. |
+| `agentId` | — | `"main"` | Agent id to wake when events fire. Default is right for single-agent bots. |
+| `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When non-empty, unlisted workflows are refused. Empty or unset = all permitted. |
+| `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client (ms). Bump for slow cold-start servers. |
+| `summaryMaxChars` | — | `4000` | Maximum characters for event summaries in wake messages. Longer summaries are truncated with a ` …[truncated]` suffix. |
 
-- `langgraphBaseUrl` — required. The LangGraph endpoint.
-- `callbackToken` — required. Bearer token for inbound webhooks. Keep secret.
-- `callbackPublicBaseUrl` — recommended. Without it, the plugin still works via the SSE-only path, but workflow-side webhook callbacks (used for redundancy) won't have a target. **Do NOT include the path `/plugins/...`** — the plugin appends it.
-- `agentId` — the OpenClaw agent id to wake when events fire. Default `"main"` is right for single-agent bots. For multi-agent gateways, set this to the agent that should receive the wake.
-- `defaultTimeoutMs` — the LangGraph HTTP client timeout. Bump if your LangGraph endpoint is slow on cold start.
-- `allowedWorkflows` — optional hardening. Allowlist of assistant ids or graph ids the agent is permitted to dispatch, inspect, or list. When non-empty, any workflow id not in the list is refused. Empty array or omitting the key entirely permits all workflows. **Why use it:** limits blast radius if the agent is prompted toward an unintended workflow. Recommended for production bots wired to more than one workflow.
+### Allowlist hardening (`allowedWorkflows`)
 
-### 3b. Mark the plugin as load-allowed (only if `plugins.allow` is set)
+If your bot should only drive specific workflows, set `allowedWorkflows` to a list of workflow ids (graph ids or assistant UUIDs):
 
-If your gateway has `plugins.allow` populated (an explicit allowlist), add the plugin id:
+```json
+"allowedWorkflows": ["fleet", "pr_review"]
+```
+
+When set, `langgraph_dispatch` and `langgraph_inspect_workflow` refuse unlisted ids. `langgraph_list_workflows` still returns all workflows but marks blocked ones `allowed: false`. Limits blast radius if the agent is prompted toward an unintended workflow.
+
+### Mark as load-allowed (only if `plugins.allow` is set)
+
+If your gateway has an explicit `plugins.allow` allowlist, add the plugin id:
 
 ```json
 {
   "plugins": {
-    "allow": ["openclaw-langgraph-bridge", "... other ids ..."]
+    "allow": ["openclaw-langgraph-bridge", "..."]
   }
 }
 ```
 
-If `plugins.allow` is empty/unset, the plugin auto-loads from the extensions directory and you can skip this step.
+If `plugins.allow` is unset, skip this step.
 
-### 3c. Restart the gateway
+---
 
-The plugin loads on gateway startup, so changes require a bounce:
+## Restart the gateway and verify
+
+### Restart
+
+```bash
+openclaw gateway restart
+```
+
+Or via systemd if running as a service:
 
 ```bash
 sudo systemctl restart openclaw-gateway
 ```
 
-Watch the log for plugin registration:
+### Verify tools are registered
+
+```bash
+openclaw plugins inspect openclaw-langgraph-bridge --runtime
+# Should list the five tools: langgraph_dispatch, langgraph_inspect,
+# langgraph_inspect_workflow, langgraph_list_workflows, langgraph_resume
+```
+
+Or check the log:
 
 ```bash
 sudo journalctl -u openclaw-gateway -n 30 --no-pager | grep langgraph-bridge
@@ -196,34 +223,18 @@ sudo journalctl -u openclaw-gateway -n 30 --no-pager | grep langgraph-bridge
 #   + langgraph_inspect + langgraph_resume tools (token configured: true)
 ```
 
-`token configured: true` confirms the `callbackToken` was read.
+`token configured: true` confirms `callbackToken` was read.
 
----
-
-## Step 4. Verify
-
-### 4a. Tools are visible to the agent
-
-In the bot's primary session (DM the bot, or a thread it's bound to), ask:
-
-> "List your tools that contain 'langgraph' in the name."
-
-Expected: the agent reports `langgraph_dispatch`, `langgraph_inspect`, `langgraph_resume`.
-
-### 4b. LangGraph is reachable
-
-From the bot host:
+### Verify LangGraph is reachable
 
 ```bash
 curl -sS -m 5 http://langgraph.example.local:2024/ok
 # Expected: {"ok":true}
 ```
 
-If this times out: the LangGraph server is unreachable from this bot. Fix the network path before continuing. Symptom of doing so: dispatches hang for `defaultTimeoutMs` then error.
+### Verify webhook endpoint (if `callbackPublicBaseUrl` is set)
 
-### 4c. Webhook endpoint is reachable (if `callbackPublicBaseUrl` is set)
-
-From a machine that LangGraph would dispatch from (often the LangGraph server itself):
+From a machine that would post events (often the LangGraph host itself):
 
 ```bash
 curl -sS -m 5 -X POST \
@@ -232,133 +243,137 @@ curl -sS -m 5 -X POST \
   -d '{"kind":"status","flow_id":"healthcheck","title":"webhook reachable"}' \
   http://<callbackPublicBaseUrl>/plugins/openclaw-langgraph-bridge/events
 # Expected: {"error":"flow_not_found","flow_id":"healthcheck"}
-# That 404 is correct — it means auth passed and routing worked; the fake flow id had no record.
+# 404 is correct — it means auth passed and routing worked; the fake flow_id had no record.
 ```
 
-If you get `unauthorized` (401): wrong token. If you get connection timeout: the bot isn't reachable at `callbackPublicBaseUrl` from where you're testing.
-
-### 4d. Verify allowlist (if `allowedWorkflows` is configured)
-
-If you set `allowedWorkflows`, verify enforcement is active by asking the agent:
-
-> "List available LangGraph workflows."
-
-The agent should call `langgraph_list_workflows()` and surface a list where some workflows are marked `allowed: false`. If everything is marked `allowed: true`, your allowlist is either unset or matched too broadly.
-
-### 4e. End-to-end smoke test (optional, requires a known workflow)
-
-If the LangGraph server has the `fleet` workflow available and you have a `spec_path` in some repo:
-
-> "Dispatch fleet workflow for ticket TEST-1 in `<some-repo>` with spec path `<some-existing-spec-path.md>`."
-
-The agent should call `langgraph_dispatch`, return a `flow_id`, then yield. Within a few minutes you should be woken with at least a milestone event. If nothing happens within 5 min and the LangGraph thread state shows progress, the wake path is broken — check `agentId` matches your bot's actual agent id and that `openclaw agent --agent <id> --message test` works manually.
+If you get HTTP 401: wrong token. If you get a connection timeout: the gateway isn't reachable at `callbackPublicBaseUrl` from where you're testing.
 
 ---
 
-## Common installation problems
+## Connecting to LangGraph
 
-### Plugin doesn't appear in the loaded-plugins list
-
-Symptom: `journalctl -u openclaw-gateway | grep langgraph-bridge` shows nothing.
-
-Causes:
-- `plugins.allow` is set and doesn't include `openclaw-langgraph-bridge`
-- `plugins.entries.openclaw-langgraph-bridge.enabled` is `false` (default is `true` when the entry exists, but explicit false overrides)
-- The extension directory is missing `dist/index.js` or `package.json`'s `openclaw.extensions` field
-- Path mismatch — gateway expects `~/.openclaw/extensions/<plugin-id>/` (matching `id` from `openclaw.plugin.json`)
-
-### `token configured: false` on startup
-
-Symptom: log shows `... (token configured: false)`.
-
-Cause: `callbackToken` not set in config, or set to an empty string. Inbound webhooks will be **rejected with 503**. Fix the config and restart.
-
-### Wake events fire but the agent's reply lands at channel root, not in-thread
-
-Symptom: for channel-thread sessions, you see the wake in-thread but the agent's response appears at channel root.
-
-Cause: pre-v0.11.0 plugin behavior. The wake message must include a `[reply-hint]` line that the agent follows. Confirm v0.11.0+ is installed:
+### Local development
 
 ```bash
-grep version ~/.openclaw/extensions/openclaw-langgraph-bridge/openclaw.plugin.json
-# Expected: "version": "0.11.0"
+# Install langgraph CLI if needed
+pip install langgraph-cli
+
+# Start a local dev server from your graph repo
+langgraph dev
+# Default: http://localhost:2024
 ```
 
-### "Too many arguments for this command" in gateway log near plugin load
+Set `langgraphBaseUrl: "http://localhost:2024"` in config.
 
-Unrelated red herring — that's the systemd `ExecStartPost` restart-notify hook on the gateway service, not the plugin. Fix it separately by editing the unit's `ExecStartPost` quoting. It does not affect plugin operation.
+### Self-hosted with Aegra
+
+[Aegra](https://docs.aegra.dev) is a self-hosted, drop-in-compatible LangGraph server. Uses the same LangGraph SDK and Python graph definitions, adds Postgres for durable state and Redis for SSE pub/sub. Recommended for production with data-residency requirements.
+
+Set `langgraphBaseUrl` to your Aegra deployment URL.
+
+### LangSmith Platform (cloud)
+
+[LangSmith Platform](https://docs.smith.langchain.com/langgraph-platform) provides managed LangGraph hosting. Set `langgraphBaseUrl` to the deployment URL from the LangSmith dashboard.
+
+> **Note:** LangSmith Platform requires authentication via a LangGraph API key. Outbound API key auth from this plugin is tracked as issue #29 and has not shipped yet. Until #29 lands, self-hosted Aegra or local `langgraph dev` are the supported options.
 
 ---
 
 ## Upgrade procedure
 
-From an installed v0.11.0 to a future v0.12.0:
-
 ```bash
-# Download new tarball over existing extension dir (overwrites dist/, openclaw.plugin.json, package.json, README.md)
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
-gh release download vX.Y.Z --repo ggettert/openclaw-langgraph-bridge \
+
+# Download new tarball over existing dir
+gh release download vX.Y.Z \
+  --repo ggettert/openclaw-langgraph-bridge \
   --pattern 'openclaw-langgraph-bridge-vX.Y.Z.tar.gz' \
   --output /tmp/oclb.tgz
 tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
 rm /tmp/oclb.tgz
 
-# Bounce gateway
-sudo systemctl restart openclaw-gateway
+# Restart
+openclaw gateway restart
 
 # Verify
-sudo journalctl -u openclaw-gateway -n 20 --no-pager | grep langgraph-bridge
 grep version "$EXT_DIR/openclaw.plugin.json"
 ```
 
-No in-place migration is required for v0.11.0 → v0.12.0+ unless a future release ships a breaking change (which would land with explicit upgrade notes).
+Check [CHANGELOG.md](../CHANGELOG.md) for migration notes before upgrading between minor versions.
 
 ---
 
 ## Uninstall
 
 ```bash
-# Stop using it
-sudo systemctl stop openclaw-gateway
-# Remove the extension dir
+openclaw gateway stop
 rm -rf ~/.openclaw/extensions/openclaw-langgraph-bridge
-# Remove the config block from openclaw.json (manually edit ~/.openclaw/openclaw.json)
-# Restart
-sudo systemctl start openclaw-gateway
+# Remove the config block from ~/.openclaw/openclaw.json
+openclaw gateway start
 ```
 
-In-flight LangGraph runs are NOT canceled by uninstall. They continue on the LangGraph server until they hit a terminal state. The agent just won't be woken about them anymore. To clean up: cancel via the LangGraph API directly before uninstalling, or accept the orphan.
+In-flight LangGraph runs are **not** canceled by uninstalling the plugin. They continue on the LangGraph server until they reach a terminal state; the agent just won't be woken about them. Cancel via the LangGraph API directly before uninstalling if you want a clean stop.
 
 ---
 
-## Known issues at v0.12.0
+## Troubleshooting
 
-Fixed in v0.12.0 (was open at v0.11.x):
-- ~~**#18**: No way for an agent to introspect a workflow's schema before dispatching.~~ Fixed: `langgraph_inspect_workflow` tool.
-- ~~**#19**: Skill didn't teach the introspect-before-dispatch pattern.~~ Fixed: skill update.
-- ~~**#20 (umbrella)**: Multi-workflow support was incomplete.~~ Fixed: `langgraph_list_workflows` discovery tool, `langgraph_inspect_workflow` schema tool, `allowedWorkflows` enforcement extended across all tools, allowlist visibility documented.
+### Plugin doesn't appear in the loaded-plugins list
 
-Fixed in v0.11.2 (was open at v0.11.0/v0.11.1):
-- ~~**#14**: Release tarball was missing `node_modules` — silent plugin load failure on install.~~ Fixed: release tarball now bundles runtime deps via `npm ci --omit=dev`.
-- ~~**#10 (M5)**: SSE + webhook double-terminal causes LangGraph retry storm.~~ Fixed: `processEvent` is now state-aware; ignores all event kinds for terminated flows.
-- ~~**#16**: Stale `hitl` after `graph:end` flips flow status `succeeded → waiting`.~~ Same fix as #10.
-- ~~**#13**: Release tarball missing INSTALL.md / DESIGN / skills/.~~ Fixed in v0.11.2 tarball.
+**Symptoms:** `journalctl | grep langgraph-bridge` shows nothing; tools aren't visible to the agent.
 
-Still open at v0.12.0 — each will bite eventually if not avoided:
+**Causes:**
+- `plugins.allow` is set and doesn't include `openclaw-langgraph-bridge`
+- `plugins.entries.openclaw-langgraph-bridge.enabled` is explicitly `false`
+- `dist/index.js` is missing (build step didn't run, or tarball extraction failed)
+- Path mismatch: gateway expects `~/.openclaw/extensions/<plugin-id>/` where `<plugin-id>` must match the `id` field in `openclaw.plugin.json`
 
-- **#7 (M2)**: Failed dispatches leave orphan "queued" flow records visible to `langgraph_inspect`. No data loss, but confuses inspect output.
-- **#6 (M1)**: `decision_only` parameter has no effect. Don't rely on it; expect every milestone to fire a wake.
-- **#11 (M6)**: `callbackToken` exposure path to LangGraph metadata — unverified. If LangGraph workflow authors are untrusted, audit before deploying with webhooks enabled.
-- **#8 (M3)**: Dead code in `LanggraphClient.resumeRun()` has wrong wire format. Cosmetic until something revives it.
-- **#9 (M4)**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.
-- **#15**: `typebox` (unscoped) vs `@sinclair/typebox` (scoped, canonical). Works; suggestion to swap on next refresh.
+### `token configured: false` on startup
 
-Track the full list at: https://github.com/ggettert/openclaw-langgraph-bridge/issues
+The `callbackToken` is not set or is set to an empty string. Inbound webhook POSTs will be **rejected with HTTP 503**. Set the token in config and restart.
+
+### Wake events fire but the agent's reply lands at channel root (not in-thread)
+
+Pre-v0.11.0 behavior. Confirm you're running v0.11.0+:
+
+```bash
+grep version ~/.openclaw/extensions/openclaw-langgraph-bridge/openclaw.plugin.json
+```
+
+### Wake events arrive in the wrong order (older events after newer ones)
+
+Fixed in v0.12.3 (per-session FIFO wake queue). Upgrade to v0.12.3+.
+
+### `flow_id` shows as `queued` in `langgraph_inspect` after a failed dispatch
+
+Fixed in v1.0 (PR #47 / issue #7): orphaned `queued` flows are now tombstoned on dispatch failure. Upgrade to v1.0+.
+
+### Milestone events wake the agent when `decision_only=true` (default)
+
+Fixed in v1.0 (PR #47 / issue #6): `decision_only=true` now correctly suppresses milestone wakes. Upgrade to v1.0+.
+
+### SSE truncates at a strange character boundary
+
+Fixed in v0.12.3. Upgrade to v0.12.3+.
+
+### `Cannot find module '@sinclair/typebox'` at startup
+
+Fixed in the v1.0 launch-prep cycle (PR #47, issue #15). The `typebox` (unscoped) package was replaced with the canonical `@sinclair/typebox`. If you built from source, run `npm ci` again.
 
 ---
 
-## Operator's reference
+## Known open issues (as of v1.0 launch-prep)
+
+- **#9**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.
+- **#29**: Outbound LangGraph API key auth not yet supported (needed for LangSmith Platform).
+
+Full list: https://github.com/ggettert/openclaw-langgraph-bridge/issues
+
+---
+
+## References
 
 - Plugin source: https://github.com/ggettert/openclaw-langgraph-bridge
+- Workflow integration guide: [`docs/workflow-contract.md`](./workflow-contract.md)
 - Skill for agents using these tools: `skills/langgraph-bridge/SKILL.md` (ships inside the install)
-- Architecture: `docs/design.md` — phase history and implementation reference
+- Why not MCP: [`docs/why-this-not-mcp.md`](./why-this-not-mcp.md)
