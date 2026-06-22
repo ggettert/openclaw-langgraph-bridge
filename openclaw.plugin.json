@@ -9,9 +9,7 @@
       "langgraphBaseUrl": {
         "type": "string",
         "description": "Base URL of the LangGraph server. Phase 1 tool calls fail fast when unset.",
-        "examples": [
-          "http://langgraph.example.local:2024"
-        ]
+        "examples": ["http://langgraph.example.local:2024"]
       },
       "callbackToken": {
         "type": "string",
