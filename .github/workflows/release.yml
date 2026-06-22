@@ -61,14 +61,25 @@ jobs:
             skills/
 
       # #23 Option C: verify the tarball doesn't contain known dev packages.
-      # Must run AFTER Package step. grep exits 0 on match (fail) and 1 on
-      # no match (ok); we invert with ||/&& so the step fails if devDeps found.
+      # Must run AFTER Package step.
+      # Fixed: use set -euo pipefail + explicit existence check so a missing or
+      # corrupt archive fails loudly instead of silently passing (Copilot review).
       - name: Verify tarball excludes dev packages
+        shell: bash
         run: |
-          tar -tzf openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz \
-            | grep -E 'node_modules/(@esbuild|@rollup|@types|@vitest|vitest)/' \
-            && { echo 'ERROR: dev packages found in release tarball'; exit 1; } \
-            || echo 'OK: no dev packages in tarball'
+          set -euo pipefail
+          archive="openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz"
+          if [ ! -f "$archive" ]; then
+            echo "ERROR: release archive not found at $archive"
+            exit 1
+          fi
+          # tar exits non-zero on read error; capture explicitly
+          contents=$(tar -tzf "$archive")
+          if echo "$contents" | grep -E 'node_modules/(@esbuild|@rollup|@types|@vitest|vitest)/'; then
+            echo "ERROR: dev packages found in release tarball"
+            exit 1
+          fi
+          echo "OK: no dev packages in tarball"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
