@@ -16,7 +16,7 @@ support window.
 
 **Please use [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) for all security disclosures.** This gives us a private channel to discuss the issue and coordinate a fix without disclosing details publicly until a patch is available.
 
-If you cannot use GitHub Security Advisories for any reason (e.g. you don't have a GitHub account, or you need to report anonymously), email **grace.gettert@carpe.io** with the subject line `[openclaw-langgraph-bridge] security`. (A dedicated project address will replace this personal one before v1.0; track [#48](https://github.com/ggettert/openclaw-langgraph-bridge/issues/48) for the swap.)
+If you cannot use GitHub Security Advisories for any reason (e.g. you don't have a GitHub account), file a public issue with the title prefix `[SECURITY]` and *no technical detail in the body* — a maintainer will move the conversation to a private Security Advisory and follow up there. Do not include exploit details, PoCs, or affected versions in the public issue.
 
 **Please do NOT:**
 - File security issues in the public issue tracker

@@ -61,9 +61,7 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainers by:
 
 - Opening a [GitHub Security Advisory](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) (used for conduct concerns during the project's pre-1.0 phase — it provides a private channel to maintainers)
-- Emailing **grace.gettert@carpe.io** with the subject line `[openclaw-langgraph-bridge] code of conduct`
-
-(A dedicated project address will replace this personal one before v1.0; track [#48](https://github.com/ggettert/openclaw-langgraph-bridge/issues/48) for the swap.)
+- If you cannot use GitHub Security Advisories, file a public issue with the title prefix `[CONDUCT]` and *no specifics in the body* — a maintainer will move the conversation to a private channel and follow up there
 
 All complaints will be reviewed and investigated promptly and fairly.
 
