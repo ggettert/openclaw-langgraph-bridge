@@ -21,7 +21,7 @@
     "workflows"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "private": true,
   "scripts": {
@@ -49,14 +49,14 @@
     "@types/node": "^25.9.3",
     "@typescript-eslint/eslint-plugin": "^8.62.0",
     "@typescript-eslint/parser": "^8.62.0",
-    "@vitest/coverage-v8": "^3.2.6",
+    "@vitest/coverage-v8": "~3.2.6",
     "eslint": "^10.5.0",
     "openclaw": "latest",
     "prettier": "^3.8.4",
     "tsx": "^4.22.4",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.62.0",
-    "vitest": "^3.2.0"
+    "vitest": "~3.2.6"
   },
   "openclaw": {
     "extensions": [
