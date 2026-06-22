@@ -121,7 +121,7 @@ The token is validated by the plugin host only. It is **not** forwarded to LangG
 
 ### `langgraphApiKey` (future)
 
-Authentication of *outbound* calls from the plugin to LangGraph (for self-hosted deployments that require it) is tracked in issue #29 and has not shipped yet. When it lands, the key will be stored in plugin config and sent only as `Authorization: Bearer` on outbound LangGraph API requests.
+Authentication of *outbound* calls from the plugin to LangGraph (for self-hosted deployments that require it) is tracked in issue #29 and has not shipped yet. When it lands, the key will be stored in plugin config and sent as `X-Api-Key: <token>` on all outbound LangGraph HTTP requests — as required by LangSmith Platform. See [issue #29](https://github.com/ggettert/openclaw-langgraph-bridge/issues/29) for implementation details.
 
 ### Reporting vulnerabilities
 

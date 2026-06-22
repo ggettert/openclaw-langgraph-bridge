@@ -95,7 +95,9 @@ describe("langgraph_dispatch — dispatch failure tombstones flow (#7)", () => {
     const result = await resultPromise;
 
     // Assert: error returned to agent.
-    // jsonResult wraps the payload — the actual fields are in `details`.
+    // `.details` is reliable: `jsonResult(payload)` calls `textResult(text, payload)` which
+    // returns `{ content: [...], details: payload }`. The payload is always placed at `.details`
+    // by the SDK — this is a stable contract (see openclaw/dist/common*.js `textResult`).
     expect((result as { details?: { status?: string } }))
       .toMatchObject({ details: { status: "error" } });
 

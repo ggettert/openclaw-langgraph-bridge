@@ -66,11 +66,14 @@ This is the production path. Download the latest release tarball and extract int
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
 
-# Download the release tarball (no auth required — public repo)
-gh release download v0.12.4 \
+# Download the latest release tarball (no auth required — public repo)
+LATEST_TAG=$(gh release list --repo ggettert/openclaw-langgraph-bridge --limit 1 --json tagName --jq '.[0].tagName')
+gh release download "$LATEST_TAG" \
   --repo ggettert/openclaw-langgraph-bridge \
-  --pattern 'openclaw-langgraph-bridge-v0.12.4.tar.gz' \
+  --pattern 'openclaw-langgraph-bridge-*.tar.gz' \
   --output /tmp/oclb.tgz
+
+# To pin a specific version, replace $LATEST_TAG with e.g. v0.13.0
 
 tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
 rm /tmp/oclb.tgz
@@ -84,8 +87,11 @@ Verify:
 ls ~/.openclaw/extensions/openclaw-langgraph-bridge
 # dist/  node_modules/  openclaw.plugin.json  package.json  README.md  docs/  skills/
 
-grep '"version"' ~/.openclaw/extensions/openclaw-langgraph-bridge/openclaw.plugin.json
-# "version": "0.12.4",
+INSTALLED_VERSION=$(openclaw plugins inspect openclaw-langgraph-bridge --json | jq -r '.version')
+[ -n "$INSTALLED_VERSION" ] || { echo "ERROR: plugin not loaded"; exit 1; }
+echo "Installed version: $INSTALLED_VERSION"
+# Optionally verify it matches the tag we downloaded:
+[ "v$INSTALLED_VERSION" = "$LATEST_TAG" ] || echo "WARN: installed version $INSTALLED_VERSION does not match downloaded $LATEST_TAG"
 ```
 
 ### Path B: git source (pinned tag)
@@ -96,7 +102,7 @@ For development bots or when you need a specific commit not yet released:
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
 cd "$EXT_DIR"
-git clone --depth=1 --branch v0.12.4 https://github.com/ggettert/openclaw-langgraph-bridge.git .
+git clone --depth=1 --branch v1.0.0 https://github.com/ggettert/openclaw-langgraph-bridge.git .
 npm ci
 npm run build
 npm test  # expect 146 passing
@@ -352,11 +358,11 @@ Fixed in v0.12.3. Upgrade to v0.12.3+.
 
 ### `Cannot find module '@sinclair/typebox'` at startup
 
-Fixed in v0.11.2+. The `typebox` (unscoped) package was replaced with the canonical `@sinclair/typebox`. If you built from source, run `npm ci` again.
+Fixed in the v1.0 launch-prep cycle (PR #47, issue #15). The `typebox` (unscoped) package was replaced with the canonical `@sinclair/typebox`. If you built from source, run `npm ci` again.
 
 ---
 
-## Known open issues (as of v0.12.4)
+## Known open issues (as of v1.0 launch-prep)
 
 - **#9**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.
 - **#29**: Outbound LangGraph API key auth not yet supported (needed for LangSmith Platform).

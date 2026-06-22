@@ -1,4 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
+// jsonResult(payload) wraps via textResult(text, payload) → { content: [{type:"text",text}], details: payload }.
+// The payload is always available at `.details` on the returned object — this is a stable SDK contract.
 import { definePluginEntry, jsonResult } from "openclaw/plugin-sdk/core";
 import { LanggraphClient, LanggraphHttpError } from "./langgraph-client.js";
 import {
