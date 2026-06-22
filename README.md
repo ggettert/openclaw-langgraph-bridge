@@ -1,5 +1,9 @@
 # openclaw-langgraph-bridge
 
+[![npm version](https://img.shields.io/npm/v/openclaw-langgraph-bridge.svg)](https://www.npmjs.com/package/openclaw-langgraph-bridge)
+[![CI](https://github.com/ggettert/openclaw-langgraph-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/ggettert/openclaw-langgraph-bridge/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 An [OpenClaw](https://openclaw.dev) plugin that lets any agent drive [LangGraph](https://github.com/langchain-ai/langgraph) workflows from inside a conversation thread — with per-thread isolation, live event streaming, HITL gate support, and proactive wake-back when workflows emit milestones or reach a terminal state.
 
 The agent stays in control of the conversation. The plugin handles the wire protocol.
@@ -36,6 +40,8 @@ The plugin surfaces five tools to the agent:
 | `langgraph_inspect` | Read the current state of an in-flight or completed run. Defaults to the latest flow in the current session. |
 | `langgraph_resume` | Resume a workflow paused at a HITL interrupt. Normalizes common replies (`approve`, `block_revise: ...`) into a typed payload. |
 
+Workflows that talk to this plugin must follow the [workflow contract](./docs/workflow-contract.md).
+
 ---
 
 ## Architecture
@@ -66,9 +72,9 @@ flowchart LR
 
 ## Status
 
-> **v0.12.2+** — OSS readiness in progress. Five tools ship and are validated end-to-end. Active known issues are tracked at [github.com/ggettert/openclaw-langgraph-bridge/issues](https://github.com/ggettert/openclaw-langgraph-bridge/issues). See [docs/installation.md → Known issues](./docs/installation.md#known-issues) for the current list.
->
-> **Channel compatibility:** Tested against Slack (DM + channel threads). Other OpenClaw channels are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. See [docs/installation.md → Supported channels](./docs/installation.md#supported-channels) for the compatibility matrix and how to add support for a new channel.
+Pre-1.0 release. Stable wire protocol, 146 tests, used in production at Carpe Data and ggettert's personal OpenClaw fleet. Pre-1.0 versions may include breaking changes between minor versions; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.
+
+Channel support: tested against Slack (DM + channel threads). Other OpenClaw channels are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. See [docs/installation.md → Supported channels](./docs/installation.md#supported-channels) for the compatibility matrix.
 
 ---
 
@@ -96,6 +102,30 @@ Keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.opencl
 | `agentId` | — | `"main"` | Agent id to wake on events |
 | `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When set: `langgraph_dispatch` and `langgraph_inspect_workflow` block non-listed ids with an error; `langgraph_list_workflows` still returns all workflows but marks blocked ones `allowed: false`. Empty or unset permits all workflows. |
 | `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client |
+
+---
+
+## Security
+
+### What the plugin stores
+
+- **`callbackToken`** — a pre-shared secret stored in plugin config (`~/.openclaw/openclaw.json`). Used to authenticate inbound webhook POSTs from LangGraph. Never sent to LangGraph; never included in dispatch payloads, URL paths, query strings, or flow metadata.
+- **`langgraphBaseUrl`** — the URL of your LangGraph server. Stored in config; sent only as the HTTP target of outbound requests.
+- No other credentials are stored by the plugin. Session keys and flow IDs are in-memory only.
+
+### `callbackToken` flow
+
+The plugin registers a POST route at `/plugins/openclaw-langgraph-bridge/events`. Every inbound request must include `Authorization: Bearer <callbackToken>`. Requests that omit or mismatch the token are rejected with HTTP 401 before any payload is parsed.
+
+The token is validated by the plugin host only. It is **not** forwarded to LangGraph, not included in SSE subscription requests, and not visible to workflow authors. Workflow authors embed it in their deployment config (e.g. as a LangGraph environment variable) to POST events back.
+
+### `langgraphApiKey` (future)
+
+Authentication of *outbound* calls from the plugin to LangGraph (for self-hosted deployments that require it) is tracked in issue #29 and has not shipped yet. When it lands, the key will be stored in plugin config and sent only as `Authorization: Bearer` on outbound LangGraph API requests.
+
+### Reporting vulnerabilities
+
+Please use [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) for all security disclosures. **Do not file security issues in the public tracker.** See CONTRIBUTING.md for the full disclosure policy.
 
 ---
 
