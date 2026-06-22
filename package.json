@@ -21,7 +21,7 @@
     "workflows"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "private": true,
   "scripts": {

@@ -5,19 +5,29 @@ set up, how we work, and where to direct different kinds of feedback.
 
 ## Dev Setup
 
-**Prerequisites:** Node.js 22+ and npm 10+.
+**Prerequisites:** Node.js 22+ (this is the version we test against in CI; earlier versions may work but are not guaranteed). npm comes bundled with Node.
+
+External contributors: fork the repo on GitHub first, then clone your fork:
+
+```bash
+gh repo fork ggettert/openclaw-langgraph-bridge --clone
+cd openclaw-langgraph-bridge
+npm install
+npm test        # runs the full vitest suite — expect all green
+npm run build   # TypeScript → dist/
+```
+
+Maintainers can clone the upstream directly:
 
 ```bash
 git clone https://github.com/ggettert/openclaw-langgraph-bridge.git
 cd openclaw-langgraph-bridge
 npm install
-npm test        # runs the full vitest suite (~138 tests, should be 0 failures)
-npm run build   # TypeScript → dist/
+npm test
+npm run build
 ```
 
-The plugin talks to a LangGraph server. For local testing against a real
-graph, copy `openclaw.plugin.json` into your OpenClaw config and point
-`langgraphBaseUrl` at a local dev server.
+The plugin talks to a LangGraph server. For local testing against a real graph, copy `openclaw.plugin.json` into your OpenClaw config and point `langgraphBaseUrl` at a local dev server (e.g. `langgraph dev` or a self-hosted Aegra instance).
 
 ## Test Conventions
 
@@ -30,6 +40,22 @@ graph, copy `openclaw.plugin.json` into your OpenClaw config and point
   without spinning up the HTTP layer
 - Keep tests deterministic; avoid `setTimeout` in tests unless you control the
   clock via `vi.useFakeTimers()`
+
+## Smoke Tests (manual, against a real LangGraph)
+
+Unit tests cover the plugin's internal logic. To exercise the plugin against a real LangGraph server (useful for verifying integration behavior, debugging webhook delivery, or reproducing user-reported bugs), three smoke scripts are available:
+
+```bash
+# Requires a LangGraph server at LANGGRAPH_BASE_URL (default http://localhost:2024)
+npm run smoke           # langgraph-sdk dispatch + inspect smoke
+npm run smoke:webhook   # webhook handler against a real flow
+npm run smoke:streaming # SSE subscriber + event classifier smoke
+```
+
+Smoke tests are NOT run in CI — they require a LangGraph server and external network access. Run them manually when:
+- Modifying the wire-format code in `src/langgraph-client.ts`
+- Changing how events are classified or routed
+- Reproducing a user-reported bug that doesn't surface in unit tests
 
 ## Branch & Commit Conventions
 
