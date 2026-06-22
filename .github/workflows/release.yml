@@ -31,16 +31,20 @@ jobs:
         run: npm test
 
       # Re-install with runtime-only deps so the tarball ships a clean
-      # node_modules/ that resolves typebox + any other runtime imports
-      # without the dev tree (vitest, typescript, @types/*, etc).
+      # node_modules/ that resolves @sinclair/typebox + any other runtime
+      # imports without the dev tree (vitest, typescript, @types/*, etc).
       #
-      # Without this step the released tarball would load fail at runtime
-      # with `Cannot find module 'typebox'` (issue #14 — DevOps bot caught
-      # this on first install of v0.11.1).
+      # Without this step the released tarball would fail at runtime with
+      # `Cannot find module` (issue #14 — DevOps bot caught this in v0.11.1).
+      #
+      # #23: --omit=dev alone is insufficient — peer and optional deps of
+      # dev packages can still land in node_modules. Belt-and-suspenders:
+      # omit all three categories so the release tarball ships only what
+      # production code actually requires at runtime.
       - name: Install runtime deps only
         run: |
           rm -rf node_modules
-          npm ci --omit=dev
+          npm ci --omit=dev --omit=optional --omit=peer
 
       - name: Package release tarball
         # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md,
@@ -55,6 +59,27 @@ jobs:
             README.md \
             docs/ \
             skills/
+
+      # #23 Option C: verify the tarball doesn't contain known dev packages.
+      # Must run AFTER Package step.
+      # Fixed: use set -euo pipefail + explicit existence check so a missing or
+      # corrupt archive fails loudly instead of silently passing (Copilot review).
+      - name: Verify tarball excludes dev packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz"
+          if [ ! -f "$archive" ]; then
+            echo "ERROR: release archive not found at $archive"
+            exit 1
+          fi
+          # tar exits non-zero on read error; capture explicitly
+          contents=$(tar -tzf "$archive")
+          if echo "$contents" | grep -E 'node_modules/(@esbuild|@rollup|@types|@vitest|vitest)/'; then
+            echo "ERROR: dev packages found in release tarball"
+            exit 1
+          fi
+          echo "OK: no dev packages in tarball"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

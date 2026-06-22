@@ -1,4 +1,6 @@
-import { Type, type Static } from "typebox";
+import { Type, type Static } from "@sinclair/typebox";
+// jsonResult(payload) wraps via textResult(text, payload) → { content: [{type:"text",text}], details: payload }.
+// The payload is always available at `.details` on the returned object — this is a stable SDK contract.
 import { definePluginEntry, jsonResult } from "openclaw/plugin-sdk/core";
 import { LanggraphClient, LanggraphHttpError } from "./langgraph-client.js";
 import {
@@ -99,7 +101,7 @@ const DispatchParams = Type.Object({
   decision_only: Type.Optional(
     Type.Boolean({
       description:
-        "When true (default), only decision/milestone/terminal events wake the agent; status events update flow state silently. Recorded in flow metadata for the Phase 2 webhook classifier.",
+        "When true (default), only decision/HITL/terminal events wake the agent; milestone events update flow state silently. When false, milestone events also wake the agent. Status events never wake regardless.",
     }),
   ),
 });
@@ -411,6 +413,12 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               ? callbackPublic.replace(/\/+$/, "") + WEBHOOK_PATH
               : undefined;
 
+            // #7: Track the created flow outside the try block so the catch
+            // can tombstone it if LangGraph dispatch fails, preventing a
+            // permanent stale 'queued' flow that blocks inspect/resume.
+            let pendingFlowId: string | undefined;
+            let pendingFlowRevision: number | undefined;
+
             try {
               const flows = api.runtime.tasks.managedFlows.fromToolContext({
                 sessionKey,
@@ -430,6 +438,9 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 },
                 currentStep: "dispatch:create-thread",
               });
+              // Capture immediately so the catch block can tombstone on failure.
+              pendingFlowId = flow.flowId;
+              pendingFlowRevision = flow.revision;
 
               const threadId = await client.createThread({
                 openclaw_flow_id: flow.flowId,
@@ -467,6 +478,11 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   flowId: flow.flowId,
                   assistantId: params.workflow,
                   input: params.input ?? null,
+                  // Security (#11): callbackToken is NEVER sent to LangGraph.
+                  // It is used solely to authenticate inbound webhook POSTs
+                  // from LangGraph (checked in webhook-handler.ts:buildHandler
+                  // against the `Authorization: Bearer <token>` header).
+                  // Verified: no token in URL path, query string, or metadata.
                   metadata: {
                     openclaw_flow_id: flow.flowId,
                     openclaw_session_key: sessionKey,
@@ -563,6 +579,41 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     ? err.message
                     : "Unknown error dispatching to LangGraph";
               logger?.error?.(`langgraph_dispatch: failed: ${message}`);
+
+              // #7: Tombstone the orphaned flow so langgraph_inspect doesn't
+              // return a zombie 'queued' flow after a dispatch failure.
+              // Wrapped in its own try/catch so cleanup failure never shadows
+              // the original dispatch error being returned to the agent.
+              if (pendingFlowId !== undefined) {
+                try {
+                  const cleanupFlows = handlerDeps.runtime.tasks.managedFlows.bindSession(
+                    { sessionKey },
+                  );
+                  // Re-read current revision in case processEvent already bumped
+                  // it via runTask/setWaiting during stream setup.
+                  const currentRecord = cleanupFlows.get(pendingFlowId) as
+                    | { revision?: number }
+                    | undefined;
+                  const currentRevision = Number(
+                    currentRecord?.revision ?? pendingFlowRevision ?? 0,
+                  );
+                  cleanupFlows.finish({
+                    flowId: pendingFlowId,
+                    expectedRevision: currentRevision,
+                    stateJson: {
+                      terminal_title: "dispatch_failed",
+                      terminal_summary: message,
+                    },
+                    endedAt: Date.now(),
+                  });
+                  logger?.info?.(
+                    `langgraph_dispatch: tombstoned orphaned flow=${pendingFlowId} after failure`,
+                  );
+                } catch {
+                  // best-effort cleanup — don't shadow the original error
+                }
+              }
+
               return jsonResult({
                 status: "error" as const,
                 reason: "langgraph_dispatch_failed",
