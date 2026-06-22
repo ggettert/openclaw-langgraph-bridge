@@ -159,9 +159,31 @@ export function processEvent(params: {
   // takes expectedRevision. The flow likely moved through createManaged
   // -> resume(running) -> ... by the time we get here.
   const currentFlow = flows.get(body.flow_id) as
-    | { revision?: number; status?: string }
+    | { revision?: number; status?: string; stateJson?: unknown }
     | undefined;
   const flowRevision = Number(currentFlow?.revision ?? params.flowRevision ?? 0);
+
+  // #6: Read decision_only from flow stateJson. When true (the default),
+  // milestone events update flow state silently but do NOT wake the agent.
+  // When false, all wake-emitting events (milestone, decision, hitl, terminal)
+  // wake the agent. Stored during dispatch as stateJson.decision_only.
+  const rawStateJson = currentFlow?.stateJson;
+  const parsedStateJson: Record<string, unknown> | null =
+    rawStateJson && typeof rawStateJson === "object"
+      ? (rawStateJson as Record<string, unknown>)
+      : rawStateJson && typeof rawStateJson === "string"
+        ? (() => {
+            try {
+              const p: unknown = JSON.parse(rawStateJson as string);
+              return p && typeof p === "object" ? (p as Record<string, unknown>) : null;
+            } catch {
+              return null;
+            }
+          })()
+        : null;
+  // Default true: matches the parameter default in DispatchParams and the
+  // original docstring promise ("when true, only decision/hitl/terminal wake").
+  const decisionOnly: boolean = parsedStateJson?.decision_only !== false;
 
   // Defense in depth (#10 / #16): if the flow is already in a terminal
   // state, ignore replay frames — LangGraph's stream + webhook can
@@ -249,20 +271,33 @@ export function processEvent(params: {
   //    flow state but emit no wake and no system event — they're
   //    intentionally silent. The agent will see the latest flow state
   //    whenever it next turns for any other reason.
+  //
+  //    #6: decision_only=true (default) suppresses wakes for `milestone`
+  //    events only — they still update flow state (runTask above) but the
+  //    agent is not woken. decision_only=false restores milestone wakes.
+  //    decision/hitl/terminal always wake regardless of this flag.
   if (actionRequiresWake(classification.action)) {
-    const doEnqueue = deps.enqueueWake ?? enqueueWakeDefault;
-    const wakeImpl = deps.wake ?? wakeAgentAsync;
-    const wakeMessage = formatEventText(kind, title, summary, sessionKey);
-    doEnqueue(
-      sessionKey,
-      () =>
-        Promise.resolve(
-          wakeImpl(
-            { agentId: deps.agentId, sessionKey, message: wakeMessage },
-            { logger: deps.logger },
+    const isWakeSuppressed =
+      decisionOnly && classification.action === "wake-light";
+    if (isWakeSuppressed) {
+      deps.logger?.info?.(
+        `langgraph-bridge: decision_only=true suppressing milestone wake flow=${body.flow_id}`,
+      );
+    } else {
+      const doEnqueue = deps.enqueueWake ?? enqueueWakeDefault;
+      const wakeImpl = deps.wake ?? wakeAgentAsync;
+      const wakeMessage = formatEventText(kind, title, summary, sessionKey);
+      doEnqueue(
+        sessionKey,
+        () =>
+          Promise.resolve(
+            wakeImpl(
+              { agentId: deps.agentId, sessionKey, message: wakeMessage },
+              { logger: deps.logger },
+            ),
           ),
-        ),
-    );
+      );
+    }
   }
 
   deps.logger?.info?.(
