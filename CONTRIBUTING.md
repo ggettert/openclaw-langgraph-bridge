@@ -32,43 +32,14 @@ The plugin talks to a LangGraph server. For local testing against a real graph, 
 ## Test Conventions
 
 - Test runner: **[vitest](https://vitest.dev)** (`npm test` or `npx vitest run`)
-- One `.test.ts` file per source file (e.g. `src/webhook-handler.test.ts`
-  covers `src/webhook-handler.ts`)
-- Mock I/O at the boundary — subprocess/fs/fetch calls are mocked; no real
-  network in unit tests
-- `processEvent` and classifiers are pure functions — test them directly
-  without spinning up the HTTP layer
-- Keep tests deterministic; avoid `setTimeout` in tests unless you control the
-  clock via `vi.useFakeTimers()`
-
-## Smoke Tests (manual, against a real LangGraph)
-
-Unit tests cover the plugin's internal logic. To exercise the plugin against a real LangGraph server (useful for verifying integration behavior, debugging webhook delivery, or reproducing user-reported bugs), three smoke scripts are available:
-
-```bash
-# Requires a LangGraph server at LANGGRAPH_BASE_URL (default http://localhost:2024)
-npm run smoke           # langgraph-sdk dispatch + inspect smoke
-npm run smoke:webhook   # webhook handler against a real flow
-npm run smoke:streaming # SSE subscriber + event classifier smoke
-```
-
-Smoke tests are NOT run in CI — they require a LangGraph server and external network access. Run them manually when:
-- Modifying the wire-format code in `src/langgraph-client.ts`
-- Changing how events are classified or routed
-- Reproducing a user-reported bug that doesn't surface in unit tests
+- One `.test.ts` file per source file (e.g. `src/webhook-handler.test.ts` covers `src/webhook-handler.ts`)
+- Mock I/O at the boundary — subprocess/fs/fetch calls are mocked; no real network in unit tests
+- `processEvent` and classifiers are pure functions — test them directly without spinning up the HTTP layer
+- Keep tests deterministic; avoid `setTimeout` in tests unless you control the clock via `vi.useFakeTimers()`
 
 ## Branch & Commit Conventions
 
-We use **[Conventional Commits](https://www.conventionalcommits.org/)**:
-
-```
-feat:     new user-facing capability
-fix:      bug fix
-docs:     documentation only
-chore:    build, CI, dependency updates
-refactor: code restructure, no behavior change
-test:     adding or updating tests
-```
+We use **[Conventional Commits](https://www.conventionalcommits.org/)**: `feat | fix | docs | chore | refactor | test`.
 
 Branch off `main`:
 
@@ -77,20 +48,15 @@ git checkout main && git pull --ff-only
 git checkout -b feat/your-feature-name   # or fix/, docs/, etc.
 ```
 
-Squash noisy WIP commits before opening a PR. Each commit in the final branch
-should be a coherent unit of change with a meaningful subject line.
+Squash noisy WIP commits before opening a PR.
 
 ## Pull Request Conventions
 
 - **Title:** Conventional-commit style (`fix: tombstone orphaned flow on dispatch failure`)
-- **Body:** Describe *what* changed and *why*. If the PR addresses an issue,
-  link it: `Closes #7`.
-- **CI:** All checks must be green before merge — `npm test` and `npm run build`
-  run on every push via `.github/workflows/ci.yml`.
-- **Size:** Keep PRs focused. A 200-line fix is easier to review than a 2000-line
-  omnibus. If you're doing multiple things, split them into separate PRs or at
-  least separate commits.
-- **Review:** At least one maintainer approval is required to merge to `main`.
+- **Body:** Describe *what* changed and *why*. If the PR addresses an issue, link it: `Closes #7`.
+- **CI:** All checks must pass before merge.
+- Small, focused PRs preferred.
+- At least one maintainer approval is required to merge to `main`.
 
 ## Where to File Things
 
@@ -98,8 +64,60 @@ should be a coherent unit of change with a meaningful subject line.
 |------|-------|
 | Bug reports | [GitHub Issues](https://github.com/ggettert/openclaw-langgraph-bridge/issues) |
 | Feature requests | [GitHub Issues](https://github.com/ggettert/openclaw-langgraph-bridge/issues) with the `enhancement` label |
-| Questions | [GitHub Discussions](https://github.com/ggettert/openclaw-langgraph-bridge/discussions) — or Issues tagged `question` if Discussions are not enabled |
-| Security vulnerabilities | See [SECURITY.md](./SECURITY.md) — **do not file publicly** |
+| Questions | [GitHub Discussions](https://github.com/ggettert/openclaw-langgraph-bridge/discussions) — or Issues tagged `question` |
+| Workflow integration questions | [docs/workflow-contract.md](./docs/workflow-contract.md) covers the plugin–workflow interface; open an Issue if the doc doesn't answer your question |
+| Security vulnerabilities | [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) — **do not file publicly** |
+
+## Releases
+
+**Releases are maintainer-only.**
+
+### How releases work
+
+Releases are triggered by pushing a `v*` tag to `main`. The release workflow (`.github/workflows/release.yml`) handles the rest automatically:
+
+1. Installs dependencies and builds TypeScript → `dist/`.
+2. Runs the full test suite.
+3. Re-installs with runtime-only deps (`npm ci --omit=dev --omit=optional --omit=peer`) so the tarball ships a clean `node_modules/`.
+4. Packages the release tarball (`dist/`, `node_modules/`, `openclaw.plugin.json`, `package.json`, `README.md`, `docs/`, `skills/`).
+5. Verifies the tarball excludes known dev packages (guards against issue #23 regressing).
+6. Creates a GitHub Release with the tarball attached and auto-generated release notes.
+
+### Pre-release checklist
+
+Before tagging:
+- [ ] `CHANGELOG.md` updated with all changes going into this release.
+- [ ] CI is green on `main`.
+- [ ] Version bumped in `package.json` and `openclaw.plugin.json`.
+
+### Tagging
+
+```bash
+git checkout main && git pull --ff-only
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+### Versioning policy
+
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0 conventions:
+- **Patch** (`0.Y.Z+1`): bugfix only; no breaking changes.
+- **Minor** (`0.Y+1.0`): may include breaking changes. Note them in `CHANGELOG.md` under `### Changed` or `### Removed`.
+
+After v1.0 we will adopt the standard SemVer guarantee (breaking changes = major bump).
+
+### Recovery
+
+If a release tag is wrong (wrong commit, broken build):
+
+```bash
+# Delete the GitHub Release via the UI or gh CLI first, then:
+git tag -d vX.Y.Z
+git push origin --delete vX.Y.Z
+# Re-tag at the correct commit and push
+git tag vX.Y.Z <correct-sha>
+git push origin vX.Y.Z
+```
 
 ## License / DCO
 
