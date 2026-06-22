@@ -58,13 +58,14 @@ representative at an online or offline event.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-**coc@<TODO-domain>** (Grace will update before v1.0 merge).
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainers by:
+
+- Opening a [GitHub Security Advisory](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) (also used for conduct concerns during the project's pre-1.0 phase — it gives a private channel to maintainers)
+- DM to **@ggettert** on GitHub
+
 All complaints will be reviewed and investigated promptly and fairly.
 
-All community leaders are obligated to respect the privacy and security of the
-reporter of any incident.
+All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
 ## Enforcement Guidelines
 

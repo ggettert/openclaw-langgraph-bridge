@@ -14,24 +14,14 @@ support window.
 
 ## Reporting a Vulnerability
 
-**Please do not file security issues publicly** — use one of the private
-channels below so we can assess and patch before disclosure.
+**Please use [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) for all security disclosures.** This gives us a private channel to discuss the issue and coordinate a fix without disclosing details publicly until a patch is available.
 
-### Preferred: GitHub Security Advisories
+If you cannot use GitHub Security Advisories for any reason (e.g. you don't have a GitHub account, or you need to report anonymously), open a private DM to **@ggettert** on GitHub.
 
-[Report a vulnerability via GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new)
-
-This is the fastest path. GitHub keeps the report private; we can draft a fix
-and coordinate a release before anything is public.
-
-### Fallback: Email
-
-**security@\<TODO-domain\>** _(maintainer will fill this in before v1.0 launch)_
-
-Include as much detail as you can:
-- Steps to reproduce
-- What data / tokens / credentials are at risk
-- Your assessment of severity and exploitability
+**Please do NOT:**
+- File security issues in the public issue tracker
+- Discuss vulnerabilities in pull requests, Discussions, or public Slack/chat
+- Post proof-of-concept exploits publicly before a coordinated disclosure
 
 ## What We Consider a Vulnerability
 
