@@ -1,14 +1,19 @@
 ---
 name: langgraph-bridge
-description: "Drive LangGraph workflows from an agent turn using langgraph_dispatch / langgraph_inspect / langgraph_inspect_workflow / langgraph_list_workflows / langgraph_resume. Agent yields after dispatch and is woken on milestones, HITL gates, and terminal events. Use list_workflows to discover what's available, inspect_workflow to get a workflow's input schema, then dispatch."
-argument-hint: "workflow id or graph id, plus structured input matching the target workflow's state schema"
+description: "Drive LangGraph workflows from an agent turn. Five tools (langgraph_dispatch / inspect / inspect_workflow / list_workflows / resume) plus proactive wake-back on milestones, HITL gates, and terminal events. Workflow-agnostic — use any LangGraph graph_id; fleet is shown as a worked example."
+version: 1.0.0
+homepage: https://github.com/ggettert/openclaw-langgraph-bridge
+metadata:
+  openclaw:
+    emoji: "🔗"
+    requires:
+      bins: [openclaw]
 ---
 
 # langgraph-bridge
 
 Use this skill whenever you need to dispatch a durable LangGraph workflow from inside an agent turn and receive proactive wake-backs when that workflow emits events (milestones, HITL interrupts, terminal).
 
-Plugin: `openclaw-langgraph-bridge` v0.12.4+  
 Phase event contract: `schema_version: 1` (see [docs/phase-event-contract.md](../../docs/phase-event-contract.md))  
 Repo: github.com/ggettert/openclaw-langgraph-bridge  
 Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workflow`, `langgraph_list_workflows`, `langgraph_resume`
@@ -17,9 +22,9 @@ Five tools: `langgraph_dispatch`, `langgraph_inspect`, `langgraph_inspect_workfl
 
 ## When to use
 
-- Driving a multi-step, durable LangGraph workflow (e.g. the `fleet` coding-agent workflow) that runs for minutes or hours and will pause at HITL gates. _(The example workflow used throughout this skill is named `fleet`; replace with your workflow name.)_
+- Driving any multi-step, durable LangGraph workflow that runs for minutes or hours and may pause at HITL gates.
 - When the agent needs to be woken in the originating Slack thread or DM when the workflow posts a milestone, decision, or terminal event.
-- When the human's approval ("approve", "block_revise: …") needs to be forwarded back into a running workflow at an interrupt point.
+- When the human's approval needs to be forwarded back into a running workflow at an interrupt point.
 
 ## When NOT to use
 
@@ -40,31 +45,26 @@ Summary is truncated by the plugin per its `summaryMaxChars` config (default 400
 
 ### Examples
 
-- 🚀 Dispatched. Workflow sdlc-feature, run abc123.
-- 🛠️ coder started — analyzing spec
-- ✅ coder finished — opened https://github.com/.../pull/42
-- 👀 reviewer started — running /review
-- ⚖️ reviewer finished — verdict: approve
-- 🤝 merge_gate started — waiting for human approval
-- 🎉 merge finished — merged https://github.com/.../pull/42
-- ❌ coder failed — RuntimeError: git push rejected: non-fast-forward
+- 🚀 Dispatched. Workflow `my-workflow`, run abc123.
+- ▶️ `<phase>` started — processing
+- ✅ `<phase>` finished — output ready
+- ❌ `<phase>` failed — RuntimeError: something went wrong
 
 ### Emoji mapping
 
-| Phase        | started | finished | failed |
-| ------------ | ------- | -------- | ------ |
-| coder        | 🛠️       | ✅       | ❌     |
-| reviewer     | 👀       | ⚖️        | ❌     |
-| merge_gate   | 🤝       | (n/a)    | ❌     |
-| merge        | 🚚       | 🎉       | ❌     |
-| (other)      | ▶️       | ✅       | ❌     |
+| Phase      | started | finished | failed |
+| ---------- | ------- | -------- | ------ |
+| `<phase>`  | ▶️       | ✅       | ❌     |
+| (other)    | ▶️       | ✅       | ❌     |
 
 Dispatch confirmation (not a phase event): 🚀
 
+> Workflows may define richer per-phase emoji. See the [appendix](#appendix-worked-example--fleet-style-coding-workflows) for an example using the `fleet` workflow's specific phase names and emoji assignments.
+
 ### What stays inline / what gets its own post
 
-- HITL interrupt (merge_gate started): post the prompt + wait for human reply
-- Reviewer verdict: include in `reviewer finished` summary (set via verdict= field)
+- HITL interrupt: post the prompt + wait for human reply
+- Phase finished: include summary (result URL, verdict, etc.) in the event summary
 - Terminal: emoji per outcome (🎉 success, ❌ failure)
 
 ### Suppression list
@@ -132,41 +132,26 @@ Dispatch a new workflow run. Returns synchronously once LangGraph has accepted t
 
 | param | type | required | notes |
 |---|---|---|---|
-| `workflow` | string | ✓ | LangGraph assistant UUID or graph id (e.g. `"fleet"`) |
-| `input` | object | ✓ (for fleet) | Must match the workflow's state schema exactly — see warning below |
+| `workflow` | string | ✓ | LangGraph assistant UUID or graph id (e.g. `"my-workflow"`) |
+| `input` | object | ✓ | Must match the workflow's state schema exactly — see warning below |
 | `decision_only` | boolean | — | Default `true`. When true, only decision/HITL/terminal events wake the agent; milestone events update flow state silently. When false, milestone events also wake the agent. Status events never wake regardless. |
 
-> **⚠ Schema enforcement.** LangGraph silently drops unknown keys in `input`. If your input has the wrong shape, downstream workflow nodes will raise `KeyError` when they try to read a field they expect. You will NOT get a clear error back from dispatch — you'll get a mid-run failure event. Always use the exact schema for your workflow (GET `<langgraph_base_url>/assistants/<assistant_id>/schemas` to inspect).
+> **⚠ Schema enforcement.** LangGraph silently drops unknown keys in `input`. If your input has the wrong shape, downstream workflow nodes will raise `KeyError` when they try to read a field they expect. You will NOT get a clear error back from dispatch — you'll get a mid-run failure event. Always use the exact schema for your workflow (GET `<langgraph_base_url>/assistants/<assistant_id>/schemas` to inspect, or use `langgraph_inspect_workflow`).
 
-**`fleet` workflow — required input keys**
-
-```
-ticket_id   string   e.g. "<ticket-id>"
-repo        string   e.g. "<your-org>/your-target-repo"
-spec_path   string   path to an existing spec file ALREADY committed to the repo
-                     e.g. "feature/<ticket-id>/tech-spec.md"
-                     ← NOT free-text; NOT a ticket title; NOT a description
-```
-
-The `spec_path` MUST exist in the repo before dispatch. The workflow's `/build` step will fail with a `RuntimeError` at runtime if the file is missing or if `spec_path` contains anything other than an actual path.
-
-> ⚠️ This example uses a known workflow shape (`fleet`). For any workflow you haven't dispatched before — or if you're not sure the shape hasn't changed — call `langgraph_inspect_workflow` first. See [Discovering and using unknown workflows](#discovering-and-using-unknown-workflows) below.
-
-**Worked example — dispatching the `fleet` workflow**
+**Worked example — dispatching `my-workflow`**
 
 ```python
-# Step 1: ensure the spec file exists, is committed, and is PUSHED to the remote repo
-#         (a local commit is not enough — the workflow reads it from the remote).
-#         A pushed feature branch is sufficient — the spec does NOT need to be on
-#         `main` and does NOT need a merged PR. fleet resolves spec_path from the
-#         repo directly. (Spec reads fine off the feature branch — only the committed file path matters.)
-# Step 2: dispatch
+# Step 1: inspect the schema to learn required fields
+result = langgraph_inspect_workflow(workflow_id="my-workflow")
+# → read result.schemas.input_schema.required
+
+# Step 2: dispatch with the correct, complete input
 result = langgraph_dispatch(
-    workflow="fleet",
+    workflow="my-workflow",
     input={
-        "ticket_id": "<ticket-id>",
-        "repo": "<your-org>/your-target-repo",
-        "spec_path": "feature/<ticket-id>/tech-spec.md"
+        "field_a": "<value>",
+        "field_b": "<value>"
+        # use the exact fields from input_schema.required
     }
 )
 # result = {
@@ -174,31 +159,33 @@ result = langgraph_dispatch(
 #   "flow_id": "flow_abc123",
 #   "langgraph_thread_id": "tid_...",
 #   "langgraph_run_id": "run_...",
-#   "workflow": "fleet",
+#   "workflow": "my-workflow",
 #   "session_key": "agent:main:slack:channel:c01...:thread:1781..."
 # }
 
 # Step 3: yield. You will be woken when events fire.
-sessions_yield(message="Dispatched fleet run. Will report back on events.")
+sessions_yield(message="Dispatched workflow run. Will report back on events.")
 ```
 
-**What breaks if spec_path is wrong:**
+> See the [appendix](#appendix-worked-example--fleet-style-coding-workflows) for a complete fleet-specific dispatch example with its required `ticket_id`, `repo`, and `spec_path` fields.
+
+**What breaks if input is wrong:**
 
 ```python
-# ❌ WRONG — free-text gets silently dropped; downstream node KeyErrors
+# ❌ WRONG — unexpected keys get silently dropped; downstream node KeyErrors
 langgraph_dispatch(
-    workflow="fleet",
+    workflow="my-workflow",
     input={
-        "ticket_id": "<ticket-id>",
-        "ticket_title": "Fix the login bug",    # ← dropped silently
-        "ticket_description": "Users can't log in",  # ← dropped silently
-        "repo": "<your-org>/your-target-repo"
-        # spec_path missing entirely
+        "unexpected_key": "some value",    # ← dropped silently
+        "another_wrong_key": "some value"  # ← dropped silently
+        # required fields missing entirely
     }
 )
-# Result: dispatch succeeds, workflow starts, coder node crashes with
-# KeyError: 'spec_path' mid-run.
+# Result: dispatch succeeds, workflow starts, downstream node crashes with
+# KeyError: '<expected_field>' mid-run.
 ```
+
+*Prevention*: call `langgraph_inspect_workflow` first; the `required` field of `input_schema` will surface all mandatory keys before dispatch.
 
 ---
 
@@ -210,14 +197,14 @@ Fetch the JSON-Schema definitions a workflow expects as input, output, state, an
 
 | param | type | required | notes |
 |---|---|---|---|
-| `workflow_id` | string | ✓ | LangGraph assistant UUID or graph id (e.g. `"fleet"`). Must match an assistant registered on the LangGraph server |
+| `workflow_id` | string | ✓ | LangGraph assistant UUID or graph id. Must match an assistant registered on the LangGraph server |
 
 **Returns** (on success)
 
 ```json
 {
   "status": "ok",
-  "workflow_id": "fleet",
+  "workflow_id": "<your-workflow>",
   "schemas": {
     "input_schema": { "title": "...", "type": "object", "properties": { ... }, "required": [ ... ] },
     "output_schema": { ... },
@@ -271,9 +258,9 @@ List every workflow (assistant) available on the configured LangGraph server. Ca
   "workflows": [
     {
       "assistant_id": "6d5d4365-62fd-59e2-807b-539d8f85d26e",
-      "graph_id": "fleet",
-      "name": "Fleet Workflow",
-      "description": "Runs the fleet orchestration pipeline",
+      "graph_id": "my-workflow",
+      "name": "My Workflow",
+      "description": "Runs the my-workflow orchestration pipeline",
       "allowed": true
     },
     {
@@ -346,7 +333,7 @@ Resume a workflow that is paused at a HITL interrupt. Internally opens a fresh S
 | `payload` | any | The human's reply. A plain string is usually correct. See normalization rules below |
 | `flow_id` | string (optional) | Specific flow to resume. Omit to resume the latest waiting flow in this session |
 
-**Payload normalization** — the plugin normalizes common HITL string replies into the structured shape `{decision, feedback}` that most `fleet` gate parsers expect:
+**Payload normalization** — the plugin normalizes common HITL string replies into the structured shape `{decision, feedback}` that most workflow gate parsers expect:
 
 | raw string | normalized |
 |---|---|
@@ -357,10 +344,10 @@ Resume a workflow that is paused at a HITL interrupt. Internally opens a fresh S
 | `"extend"`, `"extend_cap"`, `"continue"` | `{decision: "extend", feedback: ""}` |
 | anything else / object | passed through unchanged |
 
-**Worked example — resuming a merge_gate interrupt**
+**Worked example — resuming a HITL interrupt**
 
 ```python
-# After being woken with a HITL event (merge_gate asking for approve/block):
+# After being woken with a HITL event (workflow paused at a gate, asking for approve/block):
 result = langgraph_resume(payload="approve")
 # result = {
 #   "status": "resumed",
@@ -371,16 +358,16 @@ result = langgraph_resume(payload="approve")
 # }
 
 # Yield again. You will be woken on subsequent milestones and the terminal.
-sessions_yield(message="Approved. Watching for post-merge events.")
+sessions_yield(message="Approved. Watching for post-resume events.")
 ```
 
 **Resuming with feedback:**
 
 ```python
 langgraph_resume(
-    payload="block_revise: The PR is missing tests for the edge case in login_handler.py"
+    payload="block_revise: The output is missing tests for the edge case"
 )
-# Normalizes to: {decision: "block_revise", feedback: "The PR is missing..."}
+# Normalizes to: {decision: "block_revise", feedback: "The output is missing..."}
 ```
 
 **Resume guard** — if the flow is not in `status: "waiting"`, the tool returns an error rather than blindly posting to LangGraph. Check `langgraph_inspect` first if unsure.
@@ -414,14 +401,14 @@ The fix is simple: **inspect first**.
 3. langgraph_dispatch(workflow, input={...})  with the correct, complete input
 ```
 
-You only need to do this once per workflow per session. If you've already dispatched `fleet` successfully in the current session and know its shape, skip the inspect step.
+You only need to do this once per workflow per session. If you've already dispatched a workflow successfully in the current session and know its shape, skip the inspect step.
 
-### Worked example — inspecting before dispatching `fleet`
+### Worked example — inspecting before dispatching
 
 **Step 1 — inspect the schema:**
 
 ```python
-result = langgraph_inspect_workflow(workflow_id="fleet")
+result = langgraph_inspect_workflow(workflow_id="<your-workflow>")
 ```
 
 Response:
@@ -429,17 +416,17 @@ Response:
 ```json
 {
   "status": "ok",
-  "workflow_id": "fleet",
+  "workflow_id": "<your-workflow>",
   "schemas": {
     "input_schema": {
-      "title": "FleetState",
+      "title": "WorkflowState",
       "type": "object",
       "properties": {
-        "ticket_id": { "type": "string" },
-        "repo":      { "type": "string" },
-        "spec_path": { "type": "string" }
+        "field_a": { "type": "string" },
+        "field_b": { "type": "string" },
+        "field_c": { "type": "string" }
       },
-      "required": ["ticket_id", "repo", "spec_path"]
+      "required": ["field_a", "field_b", "field_c"]
     },
     "output_schema": { "..." : "..." },
     "state_schema":  { "..." : "..." },
@@ -450,23 +437,25 @@ Response:
 
 **Step 2 — read the schema:**
 
-- `input_schema.required` → `["ticket_id", "repo", "spec_path"]` — all three are mandatory.
-- `input_schema.properties` → the type of each field (all strings here).
+- `input_schema.required` → all mandatory fields listed here.
+- `input_schema.properties` → the type of each field.
 
 **Step 3 — dispatch with the correct input:**
 
 ```python
 langgraph_dispatch(
-    workflow="fleet",
+    workflow="<your-workflow>",
     input={
-        "ticket_id": "<ticket-id>",
-        "repo":      "<your-repo>",
-        "spec_path": "feature/<ticket-id>/tech-spec.md"
+        "field_a": "<value>",
+        "field_b": "<value>",
+        "field_c": "<value>"
     }
 )
 ```
 
 Because you built `input` directly from the schema's `properties` and `required` lists, no keys will be silently dropped and no downstream node will KeyError.
+
+> See the [appendix](#appendix-worked-example--fleet-style-coding-workflows) for a worked example with the `fleet` workflow's specific schema.
 
 ### When to skip introspection
 
@@ -487,74 +476,7 @@ Do not fall back to guessing the schema if inspection fails — a blind dispatch
 
 ---
 
-## Reacting to phase events (`<phase>:started` / `<phase>:finished`)
-
-Workflows like `fleet` emit milestone wakes for *both* the start and the completion of each long-running phase. The bridge plugin translates fleet's native vocabulary into milestone events the agent wakes on:
-
-| Event you receive | When it fires | What to post in Slack |
-|---|---|---|
-| `[langgraph:milestone] designer:started` | Workflow has begun authoring the tech spec | "📐 Designer working on the tech spec for `<ticket_id>`." |
-| `[langgraph:milestone] designer:finished` | Spec ready; design gate next | "Spec landed at `<tech_spec_path>`." |
-| `[langgraph:milestone] coder:started` | Coder agent dispatched against the spec | "🔨 Coder picked up `<ticket_id>`, writing code now." |
-| `[langgraph:milestone] coder:finished` | PR drafted | "✅ Coder pushed PR `<pr_url>`." |
-| `[langgraph:milestone] reviewer:started` | Reviewer agent dispatched against the PR | "👀 Reviewer started reviewing `<pr_url>`." |
-| `[langgraph:milestone] reviewer:finished` | Reviewer verdict posted to the PR | "Review complete: verdict `<review_verdict>`." |
-| `[langgraph:milestone] merge:started` | Merge gate approved, executing the merge | "🚀 Merging `<pr_url>`." |
-| `[langgraph:milestone] merge:finished` | Merge landed | "✅ Merged `<pr_url>`." |
-
-*The user wants to see progress, not just outcomes.* A 2-3 minute silence between `coder:finished` and `reviewer:finished` reads as the workflow being stuck. Surface the `reviewer:started` ack so the user knows the next phase is actively running.
-
-### Pattern
-
-```
-for each wake event you receive:
-  if event.title matches "<phase>:started":
-    post a short "… starting" message to the thread
-  elif event.title matches "<phase>:finished":
-    post the outcome (PR url, verdict, merge link)
-  elif event.kind == "hitl":
-    surface the prompt to the human and wait for their reply
-  elif event.kind == "terminal":
-    post the final summary
-```
-
-### What NOT to do
-
-- **Don't post a verdict on `reviewer:started`.** The reviewer hasn't run yet — there is no verdict. The verdict only exists in the `reviewer:finished` event's `review_verdict` field.
-- **Don't skip `:started` events.** They're cheap (a one-line ack), they reduce user anxiety, and they make the next 1-3 minutes of silence interpretable.
-- **Don't fire long messages on every `:started`.** One emoji + one line. Save the detailed summary for the corresponding `:finished` event.
-
-### Source events
-
-The bridge plugin translates fleet's native `{phase, event, ...}` custom-stream emissions into Mode B milestone events. The available `<phase>` names today (verified against the `fleet` workflow implementation):
-
-- `designer` (started, finished)
-- `coder` (started, finished)
-- `reviewer` (started, finished)
-- `merge` (started, finished, blocked)
-
-A workflow author whose graph emits a different vocabulary may produce different event titles. Use `langgraph_inspect_workflow` to learn the workflow's contract; the schemas show state fields but not custom-event vocabulary, so worst case the agent should observe a few runs and learn the pattern.
-
-**Workflow authors:** see [`docs/phase-event-contract.md`](../../docs/phase-event-contract.md) for the full payload schema, worked examples, and the `emit_phase_event` Python helper.
-
----
-
-## Failure modes (from real history)
-
-### KeyError: 'spec_path'
-
-**Symptom:** dispatch returns `status: "accepted"`, milestone events fire briefly, then workflow fails with a terminal event containing `KeyError: 'spec_path'` (or another missing field).
-
-**Root cause:** `input` passed to dispatch didn't include the required `spec_path` key. LangGraph schema enforcement silently drops unknown keys; the workflow state was populated with only the keys that matched, so downstream nodes that read `spec_path` raised `KeyError`.
-
-**Fix:**
-1. Create the spec file (e.g. `feature/<ticket-id>/tech-spec.md`) in the repo.
-2. Commit and **push** it. A pushed feature branch is enough — the spec does NOT
-   need to be merged to `main` and does NOT require a PR. (Don't burn a merge
-   gate just to land the spec; fleet reads `spec_path` straight from the repo.)
-3. Dispatch again with `spec_path` set to the exact file path, not a description.
-
-*Prevention*: call `langgraph_inspect_workflow('fleet')` first; the `required` field of `input_schema` would have surfaced `spec_path` as a mandatory key before dispatch.
+## Failure modes
 
 ### Stale plugin flow status after gateway restart
 
@@ -562,7 +484,7 @@ A workflow author whose graph emits a different vocabulary may produce different
 
 **Root cause:** Plugin managed TaskFlow state lives in process memory. A gateway restart wipes it. The plugin's view and LangGraph's view diverge.
 
-**Fix:** Use the direct LangGraph API to check truth (see escape hatch below), then call `langgraph_resume` with the correct payload if the thread is waiting, or take no action if it already completed.
+**Fix:** Use the direct LangGraph API to check truth (see [escape hatch](#direct-langgraph-api-escape-hatch) below), then call `langgraph_resume` with the correct payload if the thread is waiting, or take no action if it already completed.
 
 ### Post-resume events not surfacing
 
@@ -572,21 +494,20 @@ A workflow author whose graph emits a different vocabulary may produce different
 
 **Symptom (pre-v0.10.0 only):** `langgraph_resume` returns `status: "resumed"`, but the agent is never woken again — even though the workflow continued running, passed through more milestones, and reached a terminal.
 
-**Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake. This was the dogfood scenario that caught this — the merge landed on LangGraph but the agent was never woken about the terminal.
+**Root cause:** Before Phase 5 (v0.10.0), `langgraph_resume` POSTed to `/threads/{tid}/runs` fire-and-forget. No SSE subscriber was opened on the new run, so events from the resumed graph never reached `processEvent` and never triggered a wake.
 
-**Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch. If you are on v0.12.4+ this is not your issue — check plugin config or session binding instead.
+**Fix:** This is fixed in v0.10.0+. The `langgraph_resume` tool now routes through `dispatchAndStream` with `command: {resume: payload}`, opening an identical SSE subscriber to the initial dispatch.
 
 ### Post-resume frame replay / out-of-order events
 
-**Symptom:** after a successful `langgraph_resume` (e.g. approving a `merge_gate`),
+**Symptom:** after a successful `langgraph_resume` (e.g. approving a gate),
 the session is woken by a flurry of trailing frames that arrive *out of order* and
-*after* the work has actually completed: a **second `merge_gate` HITL interrupt**,
-followed by `merge:started` / `merge:finished` / `node:merge` recap milestones —
-some landing *after* the `graph:end` terminal frame.
+*after* the work has actually completed: a **second HITL interrupt**,
+followed by milestone recap frames — some landing *after* the `graph:end` terminal frame.
 
 **Root cause:** the resumed run opens a fresh SSE subscriber (Phase 5, v0.10.0+),
 and the post-resume event stream can replay/buffer node frames rather than deliver
-them in strict causal order. The duplicate `merge_gate` frame is stale — the gate
+them in strict causal order. The duplicate HITL frame is stale — the gate
 was already satisfied by the resume — but a consumer that reacts to frame *kind*
 alone could **double-fire `langgraph_resume`** into an already-completed flow.
 
@@ -601,15 +522,14 @@ double-firing `langgraph_resume`. Closed by #10 (M5) and #16 in v0.11.2.
 1. **`langgraph_inspect` before you `langgraph_resume`.** Treat `langgraph_inspect`
    as ground truth, not the raw frame. Treat ANY of these as terminal: `status:
    "succeeded"`, `"failed"`, `"cancelled"`, `"lost"`, or a `graph:end` summary
-   in flow state. If terminal, a trailing `merge_gate` HITL frame is stale — do
+   in flow state. If terminal, a trailing HITL frame is stale — do
    **not** call `langgraph_resume` again.
 2. The `langgraph_resume` guard helps (it errors unless the flow is `waiting`),
    but don't rely on it alone — confirm state with `langgraph_inspect` first.
-3. Trailing recap milestones (`merge:*`, `node:merge`) after terminal are
-   informational replay; verify the real outcome out-of-band (e.g. `gh pr view`)
-   and don't re-post duplicates.
+3. Trailing recap milestones after terminal are informational replay; verify the
+   real outcome out-of-band and don't re-post duplicates.
 
-### LangGraph POC unreachable
+### LangGraph server unreachable
 
 **Symptom:** `langgraph_dispatch` returns `status: "error"` with a message like `ETIMEDOUT` or `connect ECONNREFUSED`. Or the call hangs until the 10 s client timeout.
 
@@ -653,7 +573,7 @@ curl -s http://localhost:2024/threads/<langgraph_thread_id>/state \
 curl -s -X POST http://localhost:2024/threads/<tid>/runs \
   -H 'Content-Type: application/json' \
   -d '{
-    "assistant_id": "fleet",
+    "assistant_id": "<your-workflow>",
     "command": {"resume": {"decision": "approve", "feedback": ""}}
   }'
 ```
@@ -686,12 +606,211 @@ These live under `plugins.entries.openclaw-langgraph-bridge.config`. In normal o
 | `allowedWorkflows` | (empty = no restriction) | Allowlist of assistant ids / graph ids the agent may dispatch |
 | `defaultTimeoutMs` | `10000` | Per-request timeout for the LangGraph HTTP client |
 
+For full configuration docs, see the [README](../../README.md) and [docs/](../../docs/).
+
 ---
 
 ## Out of scope
 
 - Writing or modifying LangGraph workflow graphs.
-- Infrastructure provisioning (LangGraph server, EC2 POC, networking).
+- Infrastructure provisioning (LangGraph server, networking).
 - LangGraph server administration (upgrades, thread cleanup, log rotation).
 - OpenClaw gateway setup or plugin installation.
-- Authoring the `fleet` workflow itself — see `<your-org>/your-langgraph-workflows`.
+
+---
+
+## Appendix: Worked example — fleet-style coding workflows
+
+This section shows how the skill applies to one specific workflow style: the `fleet` coding-agent workflow used for development purposes. It's preserved here as a worked example because the patterns translate well to similar multi-phase coding workflows. For your own workflows, the canonical protocol above is the source of truth — the phase names, error messages, and event shapes will differ.
+
+### Fleet workflow — required input keys
+
+The `fleet` workflow requires exactly three input fields:
+
+```
+ticket_id   string   e.g. "ENG-123"
+repo        string   e.g. "my-org/my-target-repo"
+spec_path   string   path to an existing spec file ALREADY committed to the repo
+                     e.g. "feature/ENG-123/tech-spec.md"
+                     ← NOT free-text; NOT a ticket title; NOT a description
+```
+
+The `spec_path` MUST exist in the repo before dispatch. The workflow's build step will fail with a `RuntimeError` at runtime if the file is missing or if `spec_path` contains anything other than an actual path.
+
+### Dispatching the `fleet` workflow
+
+```python
+# Step 1: ensure the spec file exists, is committed, and is PUSHED to the remote repo
+#         (a local commit is not enough — the workflow reads it from the remote).
+#         A pushed feature branch is sufficient — the spec does NOT need to be on
+#         `main` and does NOT need a merged PR. fleet resolves spec_path from the
+#         repo directly. (Spec reads fine off the feature branch — only the committed file path matters.)
+# Step 2: dispatch
+result = langgraph_dispatch(
+    workflow="fleet",
+    input={
+        "ticket_id": "ENG-123",
+        "repo": "my-org/my-target-repo",
+        "spec_path": "feature/ENG-123/tech-spec.md"
+    }
+)
+# result = {
+#   "status": "accepted",
+#   "flow_id": "flow_abc123",
+#   "langgraph_thread_id": "tid_...",
+#   "langgraph_run_id": "run_...",
+#   "workflow": "fleet",
+#   "session_key": "agent:main:slack:channel:c01...:thread:1781..."
+# }
+
+# Step 3: yield. You will be woken when events fire.
+sessions_yield(message="Dispatched fleet run. Will report back on events.")
+```
+
+**What breaks if spec_path is wrong:**
+
+```python
+# ❌ WRONG — free-text gets silently dropped; downstream node KeyErrors
+langgraph_dispatch(
+    workflow="fleet",
+    input={
+        "ticket_id": "ENG-123",
+        "ticket_title": "Fix the login bug",    # ← dropped silently
+        "ticket_description": "Users can't log in",  # ← dropped silently
+        "repo": "my-org/my-target-repo"
+        # spec_path missing entirely
+    }
+)
+# Result: dispatch succeeds, workflow starts, coder node crashes with
+# KeyError: 'spec_path' mid-run.
+```
+
+### Inspecting the fleet schema
+
+```python
+result = langgraph_inspect_workflow(workflow_id="fleet")
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "workflow_id": "fleet",
+  "schemas": {
+    "input_schema": {
+      "title": "FleetState",
+      "type": "object",
+      "properties": {
+        "ticket_id": { "type": "string" },
+        "repo":      { "type": "string" },
+        "spec_path": { "type": "string" }
+      },
+      "required": ["ticket_id", "repo", "spec_path"]
+    },
+    "output_schema": { "..." : "..." },
+    "state_schema":  { "..." : "..." },
+    "config_schema": { "..." : "..." }
+  }
+}
+```
+
+### Reacting to fleet phase events
+
+The `fleet` workflow emits milestone wakes for *both* the start and the completion of each long-running phase. **These phases are specific to the `fleet` workflow. Your workflow's phases will differ.**
+
+| Event you receive | When it fires | What to post in Slack |
+|---|---|---|
+| `[langgraph:milestone] designer:started` | Workflow has begun authoring the tech spec | "📐 Designer working on the tech spec for `<ticket_id>`." |
+| `[langgraph:milestone] designer:finished` | Spec ready; design gate next | "Spec landed at `<tech_spec_path>`." |
+| `[langgraph:milestone] coder:started` | Coder agent dispatched against the spec | "🔨 Coder picked up `<ticket_id>`, writing code now." |
+| `[langgraph:milestone] coder:finished` | PR drafted | "✅ Coder pushed PR `<pr_url>`." |
+| `[langgraph:milestone] reviewer:started` | Reviewer agent dispatched against the PR | "👀 Reviewer started reviewing `<pr_url>`." |
+| `[langgraph:milestone] reviewer:finished` | Reviewer verdict posted to the PR | "Review complete: verdict `<review_verdict>`." |
+| `[langgraph:milestone] merge:started` | Merge gate approved, executing the merge | "🚀 Merging `<pr_url>`." |
+| `[langgraph:milestone] merge:finished` | Merge landed | "✅ Merged `<pr_url>`." |
+
+*The user wants to see progress, not just outcomes.* A 2-3 minute silence between `coder:finished` and `reviewer:finished` reads as the workflow being stuck. Surface the `reviewer:started` ack so the user knows the next phase is actively running.
+
+#### Pattern
+
+```
+for each wake event you receive:
+  if event.title matches "<phase>:started":
+    post a short "… starting" message to the thread
+  elif event.title matches "<phase>:finished":
+    post the outcome (PR url, verdict, merge link)
+  elif event.kind == "hitl":
+    surface the prompt to the human and wait for their reply
+  elif event.kind == "terminal":
+    post the final summary
+```
+
+#### What NOT to do
+
+- **Don't post a verdict on `reviewer:started`.** The reviewer hasn't run yet — there is no verdict. The verdict only exists in the `reviewer:finished` event's `review_verdict` field.
+- **Don't skip `:started` events.** They're cheap (a one-line ack), they reduce user anxiety, and they make the next 1-3 minutes of silence interpretable.
+- **Don't fire long messages on every `:started`.** One emoji + one line. Save the detailed summary for the corresponding `:finished` event.
+
+#### Source events and phase vocabulary
+
+The bridge plugin translates fleet's native `{phase, event, ...}` custom-stream emissions into Mode B milestone events. The available `<phase>` names (specific to the `fleet` workflow implementation):
+
+- `designer` (started, finished)
+- `coder` (started, finished)
+- `reviewer` (started, finished)
+- `merge` (started, finished, blocked)
+
+**Workflow authors:** see [`docs/phase-event-contract.md`](../../docs/phase-event-contract.md) for the full payload schema, worked examples, and the `emit_phase_event` Python helper.
+
+#### Emoji mapping for fleet phases
+
+| Phase        | started | finished | failed |
+| ------------ | ------- | -------- | ------ |
+| designer     | 📐       | ✅       | ❌     |
+| coder        | 🛠️       | ✅       | ❌     |
+| reviewer     | 👀       | ⚖️        | ❌     |
+| merge_gate   | 🤝       | (n/a)    | ❌     |
+| merge        | 🚚       | 🎉       | ❌     |
+| (other)      | ▶️       | ✅       | ❌     |
+
+### KeyError: 'spec_path' — example of a missing required input field
+
+**Symptom:** dispatch returns `status: "accepted"`, milestone events fire briefly, then workflow fails with a terminal event containing `KeyError: 'spec_path'` (or another missing field).
+
+**Root cause:** `input` passed to dispatch didn't include the required `spec_path` key. LangGraph schema enforcement silently drops unknown keys; the workflow state was populated with only the keys that matched, so downstream nodes that read `spec_path` raised `KeyError`.
+
+**Fix:**
+1. Create the spec file (e.g. `feature/ENG-123/tech-spec.md`) in the repo.
+2. Commit and **push** it. A pushed feature branch is enough — the spec does NOT
+   need to be merged to `main` and does NOT require a PR. (Don't burn a merge
+   gate just to land the spec; fleet reads `spec_path` straight from the repo.)
+3. Dispatch again with `spec_path` set to the exact file path, not a description.
+
+*Prevention*: call `langgraph_inspect_workflow('fleet')` first; the `required` field of `input_schema` would have surfaced `spec_path` as a mandatory key before dispatch.
+
+### Resuming a fleet merge_gate interrupt
+
+```python
+# After being woken with a HITL event (merge_gate asking for approve/block):
+result = langgraph_resume(payload="approve")
+# result = {
+#   "status": "resumed",
+#   "flow_id": "flow_abc123",
+#   "langgraph_thread_id": "tid_...",
+#   "resume_run_id": "run_xyz...",
+#   "note": "Flow is back to running and SSE subscriber is attached. ..."
+# }
+
+# Yield again. You will be woken on subsequent milestones and the terminal.
+sessions_yield(message="Approved. Watching for post-merge events.")
+```
+
+**Resuming with revision feedback:**
+
+```python
+langgraph_resume(
+    payload="block_revise: The PR is missing tests for the edge case in login_handler.py"
+)
+# Normalizes to: {decision: "block_revise", feedback: "The PR is missing..."}
+```
