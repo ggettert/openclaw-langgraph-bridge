@@ -79,7 +79,7 @@ gh release download "$LATEST_TAG" \
   --pattern 'openclaw-langgraph-bridge-*.tar.gz' \
   --output /tmp/oclb.tgz
 
-# To pin a specific version, replace $LATEST_TAG with e.g. v0.13.0
+# To pin a specific version, replace $LATEST_TAG with e.g. v1.0.0
 
 tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
 rm /tmp/oclb.tgz
@@ -113,22 +113,6 @@ npm ci
 npm run build
 npm test  # full suite passes
 ```
-
-### Path C: From npm (future)
-
-> **Note:** The package is currently `private: true` in `package.json` and has not been published to npm. When published:
->
-> ```bash
-> openclaw plugins install npm:openclaw-langgraph-bridge
-> ```
-
-### Path D: From ClawHub (future)
-
-> **Note:** Not yet published to ClawHub. When available:
->
-> ```bash
-> openclaw plugins install clawhub:ggettert/openclaw-langgraph-bridge
-> ```
 
 ---
 
