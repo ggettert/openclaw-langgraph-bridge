@@ -7,6 +7,7 @@ import { buildHandler, processEvent, type WebhookHandlerDeps } from "./webhook-h
 import { dispatchAndStream } from "./event-subscriber.js";
 import type { IncomingEventBody } from "./webhook-handler.js";
 import { formatInspect } from "./inspect-formatter.js";
+import { parseMaybeJson } from "./utils.js";
 
 /**
  * openclaw-langgraph-bridge — Phase 2
@@ -1060,21 +1061,6 @@ export function normalizeResumePayload(payload: unknown): unknown {
   if (decision === null) return payload;
 
   return { decision, feedback };
-}
-
-function parseMaybeJson(
-  raw: Record<string, unknown> | string | null | undefined,
-): Record<string, unknown> | null {
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw === "string") {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-    } catch {
-      return null;
-    }
-  }
-  return raw;
 }
 
 export default entry;
