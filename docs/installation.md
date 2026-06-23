@@ -53,7 +53,7 @@ Verify each before starting.
    | [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph, cloud) | **Yes** | Set `langgraphApiKey` in plugin config (see below) |
    | LangSmith Fleet | **Yes** | Set both `langgraphApiKey` and `langgraphAuthScheme: "langsmith-api-key"` |
 
-   For LangSmith Deployment or Fleet, generate an API key in the LangSmith dashboard (env var convention: `LANGGRAPH_API_KEY`) and supply it as `langgraphApiKey` in plugin config. Because `langgraphApiKey` is read on every call, config hot-reload picks up a rotated key without restarting the gateway.
+   For LangSmith Deployment or Fleet, generate an API key in the LangSmith dashboard (env var convention: `LANGGRAPH_API_KEY`) and supply it as `langgraphApiKey` in plugin config. Rotating `langgraphApiKey` requires a gateway restart for the new value to take effect (tool definitions cache config at plugin registration time).
 4. **A `callbackToken`** — a pre-shared secret the plugin uses to authenticate inbound webhook POSTs. Generate one if you don't have one:
    ```bash
    openssl rand -hex 32
