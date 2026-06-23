@@ -520,6 +520,9 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
         return;
       }
       handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
+      // Ensure onClose fires exactly once so the dispatch/resume caller's
+      // synthetic-terminal fallback runs and the flow doesn't stay in "running".
+      handlers.onClose?.(sawTerminal);
     }
   })();
 
