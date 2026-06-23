@@ -25,7 +25,7 @@ The split is the point: *the agent stops being asked to be a reliable executor; 
 
 ## Quick start
 
-See **[docs/installation.md](./docs/installation.md)** for the full per-bot install runbook: tarball download, plugin config, gateway config, and verification steps.
+See **[docs/installation.md](./docs/installation.md)** for the full per-bot install runbook: install paths (ClawHub, npm, git, source), plugin config, gateway config, and verification steps.
 
 ---
 

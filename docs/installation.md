@@ -40,7 +40,7 @@ Verify each before starting.
    openclaw --version
    # v2026.5.17 or higher
    ```
-2. **Node 22+** (needed for build-from-source path only; not required for the tarball path):
+2. **Node 22+** (needed for build-from-source path only; ClawHub and npm install paths handle this automatically):
    ```bash
    node --version  # v22.x.x
    ```
@@ -64,55 +64,41 @@ Verify each before starting.
 
 ## Install paths
 
-### Path A: GitHub release tarball (recommended)
-
-This is the production path. Download the latest release tarball and extract into the extensions directory:
+### Path A: ClawHub (recommended for most users)
 
 ```bash
-EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
-mkdir -p "$EXT_DIR"
-
-# Download the latest release tarball (no auth required — public repo)
-LATEST_TAG=$(gh release list --repo ggettert/openclaw-langgraph-bridge --limit 1 --json tagName --jq '.[0].tagName')
-gh release download "$LATEST_TAG" \
-  --repo ggettert/openclaw-langgraph-bridge \
-  --pattern 'openclaw-langgraph-bridge-*.tar.gz' \
-  --output /tmp/oclb.tgz
-
-# To pin a specific version, replace $LATEST_TAG with e.g. v1.0.0
-
-tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
-rm /tmp/oclb.tgz
+openclaw plugins install clawhub:@ggettert/openclaw-langgraph-bridge
 ```
 
-The tarball extracts `dist/`, `node_modules/` (runtime deps only), `openclaw.plugin.json`, `package.json`, `README.md`, `docs/`, and `skills/` directly into the target directory.
+ClawHub auto-discovers OpenClaw plugins from npm and verifies digest + signed provenance. Easiest path for production bots.
 
-Verify:
+### Path B: npm
 
 ```bash
-ls ~/.openclaw/extensions/openclaw-langgraph-bridge
-# dist/  node_modules/  openclaw.plugin.json  package.json  README.md  docs/  skills/
-
-INSTALLED_VERSION=$(openclaw plugins inspect openclaw-langgraph-bridge --json | jq -r '.version')
-[ -n "$INSTALLED_VERSION" ] || { echo "ERROR: plugin not loaded"; exit 1; }
-echo "Installed version: $INSTALLED_VERSION"
-# Optionally verify it matches the tag we downloaded:
-[ "v$INSTALLED_VERSION" = "$LATEST_TAG" ] || echo "WARN: installed version $INSTALLED_VERSION does not match downloaded $LATEST_TAG"
+openclaw plugins install npm:@ggettert/openclaw-langgraph-bridge
 ```
 
-### Path B: git source (pinned tag)
+For environments where ClawHub isn't configured or you want to pin via standard npm tooling.
 
-For development bots or when you need a specific commit not yet released. Replace `vX.Y.Z` below with the latest release tag — see [Releases](https://github.com/ggettert/openclaw-langgraph-bridge/releases):
+### Path C: git (pre-release / unreleased builds)
 
 ```bash
-EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
-mkdir -p "$EXT_DIR"
-cd "$EXT_DIR"
-git clone --depth=1 --branch vX.Y.Z https://github.com/ggettert/openclaw-langgraph-bridge.git .
+openclaw plugins install git:github.com/ggettert/openclaw-langgraph-bridge#main
+```
+
+Useful for testing unreleased builds, pinning to a specific commit SHA, or working from a feature branch.
+
+### Path D: Build from source
+
+```bash
+git clone https://github.com/ggettert/openclaw-langgraph-bridge.git
+cd openclaw-langgraph-bridge
 npm ci
 npm run build
-npm test  # full suite passes
+# Then point OpenClaw at the dist/ directory via plugins.entries config
 ```
+
+For contributors only.
 
 ---
 
@@ -297,22 +283,23 @@ For LangSmith Fleet deployments, also set `langgraphAuthScheme: "langsmith-api-k
 
 ## Upgrade procedure
 
+### ClawHub / npm install path
+
+```bash
+openclaw plugins upgrade @ggettert/openclaw-langgraph-bridge
+openclaw gateway restart
+```
+
+### Build-from-source path
+
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
-
-# Download new tarball over existing dir
-gh release download vX.Y.Z \
-  --repo ggettert/openclaw-langgraph-bridge \
-  --pattern 'openclaw-langgraph-bridge-vX.Y.Z.tar.gz' \
-  --output /tmp/oclb.tgz
-tar -xzf /tmp/oclb.tgz -C "$EXT_DIR"
-rm /tmp/oclb.tgz
-
-# Restart
+cd "$EXT_DIR"
+git fetch --tags
+git checkout vX.Y.Z
+npm ci
+npm run build
 openclaw gateway restart
-
-# Verify
-grep version "$EXT_DIR/openclaw.plugin.json"
 ```
 
 Check [CHANGELOG.md](../CHANGELOG.md) for migration notes before upgrading between minor versions.
@@ -341,7 +328,7 @@ In-flight LangGraph runs are **not** canceled by uninstalling the plugin. They c
 **Causes:**
 - `plugins.allow` is set and doesn't include `openclaw-langgraph-bridge`
 - `plugins.entries.openclaw-langgraph-bridge.enabled` is explicitly `false`
-- `dist/index.js` is missing (build step didn't run, or tarball extraction failed)
+- `dist/index.js` is missing (build step didn't run; for source installs, run `npm run build`)
 - Path mismatch: gateway expects `~/.openclaw/extensions/<plugin-id>/` where `<plugin-id>` must match the `id` field in `openclaw.plugin.json`
 
 ### `token configured: false` on startup
