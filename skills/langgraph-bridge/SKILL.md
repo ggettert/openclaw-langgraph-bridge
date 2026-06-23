@@ -1,7 +1,6 @@
 ---
 name: langgraph-bridge
 description: "Dispatch LangGraph workflows from an agent turn; wake on milestones, HITL gates, and terminal events."
-version: 1.0.0
 homepage: https://github.com/ggettert/openclaw-langgraph-bridge
 metadata:
   openclaw:
