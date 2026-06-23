@@ -5,4 +5,9 @@ coverage/
 .DS_Store
 .env
 .env.*
+.venv/
+**/.venv/
+examples/**/.venv/
+**/__pycache__/
+**/.langgraph_api/
 COMPETITIVE-ANALYSIS-2026-06-16.md

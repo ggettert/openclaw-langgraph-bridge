@@ -38,6 +38,95 @@ The plugin talks to a LangGraph server. For local testing against a real graph, 
 - `processEvent` and classifiers are pure functions — test them directly without spinning up the HTTP layer
 - Keep tests deterministic; avoid `setTimeout` in tests unless you control the clock via `vi.useFakeTimers()`
 
+### Integration Tests
+
+Tests in `src/integration/` exercise the plugin against a real LangGraph server.
+They are **skipped silently** when neither `LANGGRAPH_BASE_URL` nor
+`RUN_INTEGRATION` is set, so `npm test` (unit-only) always runs fast and clean
+without making any network calls.
+
+```bash
+npm run test:integration          # integration only (auto-skips if no LangGraph)
+npm run test:all                  # unit + integration
+```
+
+#### Enabling integration tests locally
+
+You need a running LangGraph server with the `integration-stub` assistant registered.
+The easiest way is the example graph included in this repo:
+
+```bash
+# Terminal 1 — start the stub server
+pip install langgraph-cli
+cd examples/integration-test-graph
+langgraph dev --no-browser
+# Server listens on http://localhost:2024
+
+# Terminal 2 — run the tests
+RUN_INTEGRATION=1 npm run test:integration
+# or equivalently:
+LANGGRAPH_BASE_URL=http://localhost:2024 npm run test:integration
+```
+
+**Either env var enables the tests:**
+- `LANGGRAPH_BASE_URL` — set this when pointing at a non-default host
+  (e.g. a LangSmith Deployment or staging server).
+- `RUN_INTEGRATION=1` — set this when using the default `localhost:2024` and
+  you don't need to override the URL.
+
+Without at least one of these, `isLangGraphReachable()` short-circuits without
+any network call. This is intentional — it keeps `npm test` completely offline.
+
+#### Assistant requirement
+
+Integration tests target the assistant id stored in `LANGGRAPH_WORKFLOW`
+(default: `integration-stub`).  If the server is reachable but that assistant
+is not registered, you'll see a clear `[integration]` warning and the describe
+blocks will be skipped.
+
+To register the default assistant:
+```bash
+cd examples/integration-test-graph && langgraph dev --no-browser
+```
+
+To target a different assistant:
+```bash
+LANGGRAPH_WORKFLOW=my-graph npm run test:integration
+```
+
+#### Optional: authentication
+
+When running against a secured server (LangSmith Deployment, etc.) pass:
+
+```bash
+LANGGRAPH_API_KEY=lsv2_...  npm run test:integration
+# Optionally also:
+LANGGRAPH_AUTH_SCHEME=Bearer  npm run test:integration
+```
+
+Both are optional; omit them for unauthenticated local dev servers.
+
+#### CI
+
+CI runs integration tests in a dedicated job (`integration`) that:
+1. Starts `examples/integration-test-graph` via `langgraph dev --no-browser`.
+2. Waits for the server to be ready.
+3. Runs `npm run test:integration`.
+4. **Asserts at least one test ran and passed** — a zero-test result fails the job
+   loudly (prevents false-green checks).
+
+The job is blocking (not `continue-on-error`) — if the server fails to start,
+the job fails visibly rather than silently succeeding with zero tests.
+
+The integration tests live in `src/integration/`. When adding a new one, add
+the availability guard at the top of the file:
+
+```typescript
+import { isLangGraphReachable } from "./helpers.js";
+const reachable = await isLangGraphReachable();
+describe.skipIf(!reachable)("My suite (integration)", () => { ... });
+```
+
 ## Branch & Commit Conventions
 
 We use **[Conventional Commits](https://www.conventionalcommits.org/)**: `feat | fix | docs | chore | refactor | test`.
