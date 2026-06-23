@@ -47,9 +47,9 @@ jobs:
           npm ci --omit=dev --omit=optional --omit=peer
 
       - name: Package release tarball
-        # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md,
-        # DESIGN.md → docs/design.md, the AUDIT-* file moved out of the
-        # tarball entirely (internal audit artifact excluded per OSS-readiness review).
+        # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md.
+        # AUDIT-* files excluded from tarball (internal audit artifacts, OSS-readiness review).
+        # docs/design.md removed in docs/must-fix-cleanup PR (internal scratchpad, not user docs).
         run: |
           tar -czf openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz \
             dist/ \

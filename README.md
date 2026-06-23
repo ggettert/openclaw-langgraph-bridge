@@ -73,7 +73,7 @@ flowchart LR
 
 ## Status
 
-Pre-1.0 release. Stable wire protocol, 146 tests, used in production across personal OpenClaw fleets. Pre-1.0 versions may include breaking changes between minor versions; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.
+Pre-1.0 release. Stable wire protocol, comprehensive test suite, used in production across personal OpenClaw fleets. Pre-1.0 versions may include breaking changes between minor versions; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.
 
 Channel support: tested against Slack (DM + channel threads). Other OpenClaw channels are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. See [docs/installation.md → Supported channels](./docs/installation.md#supported-channels) for the compatibility matrix.
 
@@ -97,7 +97,7 @@ Keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.opencl
 
 | Key | Required | Default | Description |
 |---|---|---|---|
-| `langgraphBaseUrl` | ✓ | — | Base URL of your LangGraph server (e.g. `http://langgraph.example.local:2024`) |
+| `langgraphBaseUrl` | ✓ | — | Base URL of your LangGraph server (e.g. `http://langgraph.example.com:2024`) |
 | `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs |
 | `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server will POST events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
 | `agentId` | — | `"main"` | Agent id to wake on events |

@@ -38,6 +38,8 @@ The plugin talks to a LangGraph server. For local testing against a real graph, 
 - `processEvent` and classifiers are pure functions — test them directly without spinning up the HTTP layer
 - Keep tests deterministic; avoid `setTimeout` in tests unless you control the clock via `vi.useFakeTimers()`
 
+> Do not hardcode the test count in user-facing docs. Reference the CI badge or "full suite passes" instead.
+
 ### Integration Tests
 
 Tests in `src/integration/` exercise the plugin against a real LangGraph server.
