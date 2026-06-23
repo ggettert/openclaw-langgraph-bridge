@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "integration-stub": "./stub_graph.py:graph"
+  }
+}

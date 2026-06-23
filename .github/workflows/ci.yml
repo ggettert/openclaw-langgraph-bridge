@@ -37,3 +37,74 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  integration:
+    name: Integration Tests (LangGraph dev)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install LangGraph CLI
+        # `langgraph dev` requires the in-memory runtime extra. Plain
+        # `langgraph-cli` installs only the CLI shell and fails at startup
+        # with: "Required package 'langgraph-api' is not installed".
+        run: pip install --quiet "langgraph-cli[inmem]"
+
+      - name: Start langgraph dev
+        # Start the example stub graph so that integration tests can reach
+        # a real assistant ('integration-stub').  If this step fails (e.g.
+        # broken graph, missing deps), we want a loud failure — not a silent
+        # skip.  continue-on-error is intentionally absent.
+        run: |
+          cd examples/integration-test-graph && langgraph dev --no-browser &
+          LG_PID=$!
+          echo "Waiting for LangGraph server to become ready (PID $LG_PID)…"
+          ready=""
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:2024/info >/dev/null; then
+              ready="y"
+              break
+            fi
+            # If the background process already died, bail immediately
+            if ! kill -0 "$LG_PID" 2>/dev/null; then
+              echo "ERROR: langgraph dev exited before becoming ready." >&2
+              wait "$LG_PID" 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "ERROR: LangGraph server not ready after 60s. Killing PID $LG_PID." >&2
+            kill "$LG_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "LangGraph server ready."
+
+      - name: Run integration tests
+        run: npm run test:integration -- --reporter=json --outputFile=integration-results.json
+        env:
+          LANGGRAPH_BASE_URL: "http://localhost:2024"
+          # LANGGRAPH_WORKFLOW defaults to "integration-stub" (matches examples/integration-test-graph)
+
+      # Guard: assert that at least one test actually ran and passed.
+      # Without this guard vitest exits 0 when every describe block is
+      # skipped (e.g. isLangGraphReachable() returned false), producing a
+      # false-green check on the PR.
+      - name: Assert integration tests ran
+        run: |
+          jq -e '.numTotalTests > 0 and .numPassedTests > 0' integration-results.json \
+            || { echo "ERROR: No integration tests ran or passed. Check the LangGraph server startup step above."; exit 1; }
