@@ -73,14 +73,24 @@ export async function isLangGraphReachable(timeoutMs = 1000): Promise<boolean> {
   }
 
   // --- 2. Confirm the assistant is registered --------------------------
+  // NOTE: GET /assistants/<id> requires a UUID literal. To probe by graph_id
+  // (e.g. "integration-stub"), POST /assistants/search with a graph_id filter.
+  // This matches how the bridge's client resolves assistants under the hood.
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/${LANGGRAPH_WORKFLOW}`, {
+    const res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/search`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ graph_id: LANGGRAPH_WORKFLOW, limit: 1 }),
       signal: controller.signal,
     });
     clearTimeout(t);
     if (!res.ok) {
+      return false;
+    }
+    const matches = (await res.json()) as Array<{ assistant_id: string }>;
+    if (!Array.isArray(matches) || matches.length === 0) {
       console.warn(
         `[integration] LangGraph reachable but assistant '${LANGGRAPH_WORKFLOW}' not found — ` +
           `skipping integration tests. ` +

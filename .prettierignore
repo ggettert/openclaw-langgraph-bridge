@@ -3,3 +3,6 @@ dist
 coverage
 *.md
 package-lock.json
+.venv
+**/.venv
+examples/**/.venv
