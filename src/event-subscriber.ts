@@ -203,9 +203,9 @@ export function classifyStreamFrame(
       // Shape 2b: legacy phase event vocabulary {phase, event, ...} without required
       // fields (e.g. no summary, no ticket_id). Falls back to heuristic summary.
       const phase = data.phase as string | undefined;
-      const fleetEvent = data.event as string | undefined;
-      if (phase && fleetEvent) {
-        const translated = translatePhaseEventVocabulary(phase, fleetEvent, data);
+      const phaseEventName = data.event as string | undefined;
+      if (phase && phaseEventName) {
+        const translated = translatePhaseEventVocabulary(phase, phaseEventName, data);
         return {
           kind: "emit",
           body: {
@@ -263,20 +263,20 @@ const VALID_KINDS = new Set<string>(["status", "milestone", "decision", "termina
  */
 function translatePhaseEventVocabulary(
   phase: string,
-  fleetEvent: string,
+  phaseEventName: string,
   data: Record<string, unknown>,
 ): {
   kind: LanggraphEventKind;
   title: string;
   summary: string;
 } {
-  const eventNorm = fleetEvent.toLowerCase();
+  const eventNorm = phaseEventName.toLowerCase();
 
-  // Explicit summary preferred over summarizeFleetData heuristic.
+  // Explicit summary preferred over summarizePhaseEventData heuristic.
   // Truncation is owned by processEvent (see summaryMaxChars).
   const explicitSummary =
     typeof data.summary === "string" && data.summary.length > 0 ? data.summary : null;
-  const summary = explicitSummary ?? summarizeFleetData(data);
+  const summary = explicitSummary ?? summarizePhaseEventData(data);
 
   if (eventNorm === "started" || eventNorm === "start") {
     return { kind: "milestone", title: `${phase}:started`, summary };
@@ -290,9 +290,9 @@ function translatePhaseEventVocabulary(
     return { kind: "milestone", title: `${phase}:finished`, summary };
   }
   if (eventNorm === "failed" || eventNorm === "error") {
-    return { kind: "terminal", title: `${phase}:${fleetEvent}`, summary };
+    return { kind: "terminal", title: `${phase}:${phaseEventName}`, summary };
   }
-  return { kind: "status", title: `${phase}:${fleetEvent}`, summary };
+  return { kind: "status", title: `${phase}:${phaseEventName}`, summary };
 }
 
 /**
@@ -300,7 +300,7 @@ function translatePhaseEventVocabulary(
  * fields most likely to be useful in a Slack message (pr_url, ticket_id,
  * verdict, etc.) over raw JSON.
  */
-function summarizeFleetData(data: Record<string, unknown>): string {
+function summarizePhaseEventData(data: Record<string, unknown>): string {
   const parts: string[] = [];
   const tid = data.ticket_id;
   if (typeof tid === "string") parts.push(tid);

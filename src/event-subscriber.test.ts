@@ -325,7 +325,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
 
   it("explicit summary field preferred over heuristic when present", () => {
     // When the workflow author provides data.summary, that string is used
-    // instead of the summarizeFleetData heuristic.
+    // instead of the summarizePhaseEventData heuristic.
     const body = emit(
       classifyStreamFrame(
         {
@@ -348,7 +348,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
   });
 
   it("heuristic summary used when explicit summary field is absent", () => {
-    // Legacy payload without data.summary falls back to summarizeFleetData.
+    // Legacy payload without data.summary falls back to summarizePhaseEventData.
     const body = emit(
       classifyStreamFrame(
         {
