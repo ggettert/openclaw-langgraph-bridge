@@ -307,6 +307,8 @@ The plugin sends `x-api-key: <langgraphApiKey>` on all outbound HTTP calls to th
 
 For LangSmith Fleet deployments, also set `langgraphAuthScheme: "langsmith-api-key"` — Fleet requires both `x-api-key` and `x-auth-scheme: langsmith-api-key` headers.
 
+> **⚠️ Verification status:** `langgraphApiKey` and `langgraphAuthScheme` are covered by unit tests against mocked HTTP only. As of v1.0, no end-to-end verification against a live LangSmith Deployment or Fleet endpoint has been performed. Please [file an issue](https://github.com/ggettert/openclaw-langgraph-bridge/issues) if you hit auth-related failures so we can pin down the wire-format quirk.
+
 ---
 
 ## Upgrade procedure
