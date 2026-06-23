@@ -5,16 +5,25 @@ on:
     tags:
       - "v*"
 
+permissions: {}
+
 jobs:
   release:
     name: Build & Publish Release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Maintainer-only release: only the repo owner can trigger this workflow.
+    # Defense in depth: GitHub tag protection rule on `v*` is the primary control;
+    # this `if:` is the secondary control in case the tag-protection rule is ever
+    # mis-configured. Update the actor list when adding maintainers.
+    if: github.actor == 'ggettert'
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history needed for auto-generated release notes against previous tag
 
       - uses: actions/setup-node@v4
         with:
@@ -45,6 +54,12 @@ jobs:
         run: |
           rm -rf node_modules
           npm ci --omit=dev --omit=optional --omit=peer
+
+      - name: Smoke-test runtime install
+        # Verify the production install can actually load the built plugin.
+        # Catches missing-runtime-dep regressions like #15 before they ship.
+        run: |
+          node -e "require('./dist/index.js'); console.log('OK: dist/index.js loads cleanly with runtime-only deps');"
 
       - name: Package release tarball
         # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md.
