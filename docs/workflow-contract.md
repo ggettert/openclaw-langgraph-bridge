@@ -133,7 +133,7 @@ Requests without a valid `Authorization` header are rejected with HTTP 401. Requ
 |---|---|---|
 | `kind` | ✓ | One of the five event kinds above. Invalid values return HTTP 400. |
 | `flow_id` | ✓ | The OpenClaw flow id returned by `langgraph_dispatch`. Missing or empty returns HTTP 400. |
-| `seq` | ✓ | Monotonically increasing integer per run. Used for deduplication and ordering. |
+| `seq` | — | Monotonically increasing integer per run. Currently informational only (not enforced for deduplication or ordering — tracked for future Phase 4 work). |
 | `title` | ✓ | Short machine-readable label (e.g. `"coder:started"`). Shown in the wake message header. |
 | `summary` | — | Human-readable one-liner. Shown in the wake message body. Truncated at `summaryMaxChars` (default 4000). |
 | `data` | — | Arbitrary JSON object. Stored in flow state for `langgraph_inspect`; not formatted in the wake message. |
@@ -226,6 +226,8 @@ The plugin's `langgraph_resume` tool accepts the human's reply and normalizes it
 ---
 
 ## Minimal example workflow
+
+> The example below uses Python LangGraph. The plugin's wire protocol (SSE event stream, webhook callback) is identical for [JS/TS LangGraph workflows](https://langchain-ai.github.io/langgraphjs/) — only the SDK calls (`get_stream_writer`, `interrupt`) differ. The same `{phase, event, ticket_id, summary}` payload shape applies.
 
 A minimal Python LangGraph workflow that integrates cleanly with the plugin:
 
