@@ -382,10 +382,16 @@ export type StreamingDispatchParams = {
   command?: { resume?: unknown; [k: string]: unknown } | null;
   metadata?: Record<string, unknown>;
   /**
-   * API key for LangSmith Platform. When set, sent as `X-Api-Key` on the
+   * API key for LangSmith Deployment. When set, sent as `x-api-key` on the
    * streaming request. Do NOT log this value.
    */
   apiKey?: string;
+  /**
+   * Auth scheme sent as `x-auth-scheme` alongside `x-api-key`.
+   * Required for LangSmith Fleet deployments (value: `"langsmith-api-key"`).
+   * Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.
+   */
+  authScheme?: string;
   handlers: StreamHandlers;
   fetchImpl?: typeof fetch;
 };
@@ -407,9 +413,12 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
     command,
     metadata,
     apiKey,
+    authScheme,
     handlers,
     fetchImpl,
   } = params;
+  const trimmedApiKey = apiKey?.trim() || undefined;
+  const trimmedAuthScheme = authScheme?.trim() || undefined;
 
   const controller = new AbortController();
   const url = baseUrl.replace(/\/+$/, "") + `/threads/${encodeURIComponent(threadId)}/runs/stream`;
@@ -422,7 +431,8 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
         "content-type": "application/json",
         accept: "text/event-stream",
       };
-      if (apiKey) streamHeaders["X-Api-Key"] = apiKey;
+      if (trimmedApiKey) streamHeaders["x-api-key"] = trimmedApiKey;
+      if (trimmedAuthScheme) streamHeaders["x-auth-scheme"] = trimmedAuthScheme;
       const res = await f(url, {
         method: "POST",
         headers: streamHeaders,

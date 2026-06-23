@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import entry from "./index.js";
+import { Value } from "@sinclair/typebox/value";
+import entry, { ConfigSchema } from "./index.js";
 import { makeMockApi, makeFakeFlowRecord } from "./test-harness.js";
 
 /**
@@ -99,6 +100,38 @@ function makeDispatchFetch(options?: {
 
   return fetchImpl as unknown as typeof fetch;
 }
+
+// ---------------------------------------------------------------------------
+// ConfigSchema validation
+// ---------------------------------------------------------------------------
+
+describe("ConfigSchema — langgraphApiKey validation", () => {
+  it("rejects empty string (minLength: 1)", () => {
+    expect(Value.Check(ConfigSchema, { langgraphApiKey: "" })).toBe(false);
+  });
+
+  it("rejects whitespace-only string (pattern fails)", () => {
+    expect(Value.Check(ConfigSchema, { langgraphApiKey: "   " })).toBe(false);
+    expect(Value.Check(ConfigSchema, { langgraphApiKey: "\t" })).toBe(false);
+    expect(Value.Check(ConfigSchema, { langgraphApiKey: "\n" })).toBe(false);
+  });
+
+  it("rejects pasted curl commands with spaces", () => {
+    expect(
+      Value.Check(ConfigSchema, { langgraphApiKey: "curl -H 'Authorization: Bearer foo'" }),
+    ).toBe(false);
+  });
+
+  it("accepts valid API key strings", () => {
+    expect(Value.Check(ConfigSchema, { langgraphApiKey: "lsv2_abc123" })).toBe(true);
+    expect(Value.Check(ConfigSchema, { langgraphApiKey: "ls__abc.def+ghi/jkl=" })).toBe(true);
+  });
+
+  it("accepts config without langgraphApiKey (field is Optional)", () => {
+    expect(Value.Check(ConfigSchema, {})).toBe(true);
+    expect(Value.Check(ConfigSchema, { langgraphBaseUrl: "http://lg:2024" })).toBe(true);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // langgraph_inspect
@@ -855,7 +888,7 @@ describe("langgraphApiKey — X-Api-Key header integration", () => {
     return { fetchImpl, capturedHeaders };
   }
 
-  it("sends X-Api-Key on all outbound calls when langgraphApiKey is configured", async () => {
+  it("sends x-api-key on all outbound calls when langgraphApiKey is configured", async () => {
     const { fetchImpl, capturedHeaders } = makeHeaderCapturingFetch();
     globalThis.fetch = fetchImpl as unknown as typeof fetch;
 
@@ -873,14 +906,14 @@ describe("langgraphApiKey — X-Api-Key header integration", () => {
     })) as { details?: { status?: string } };
 
     expect(result.details?.status).toBe("accepted");
-    // Every outbound call (createThread + stream) must have X-Api-Key
+    // Every outbound call (createThread + stream) must have x-api-key
     expect(capturedHeaders.length).toBeGreaterThanOrEqual(2);
     for (const { headers } of capturedHeaders) {
-      expect(headers["X-Api-Key"]).toBe("integration-test-key");
+      expect(headers["x-api-key"]).toBe("integration-test-key");
     }
   });
 
-  it("does NOT send X-Api-Key when langgraphApiKey is not configured", async () => {
+  it("does NOT send x-api-key when langgraphApiKey is not configured", async () => {
     const { fetchImpl, capturedHeaders } = makeHeaderCapturingFetch();
     globalThis.fetch = fetchImpl as unknown as typeof fetch;
 
@@ -898,8 +931,47 @@ describe("langgraphApiKey — X-Api-Key header integration", () => {
     })) as { details?: { status?: string } };
 
     expect(result.details?.status).toBe("accepted");
+    expect(capturedHeaders.length).toBeGreaterThanOrEqual(1);
     for (const { headers } of capturedHeaders) {
-      expect(headers).not.toHaveProperty("X-Api-Key");
+      expect(headers).not.toHaveProperty("x-api-key");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// langgraphApiKey — sentinel no-leak test
+// ---------------------------------------------------------------------------
+
+describe("langgraphApiKey — sentinel no-leak test", () => {
+  const SENTINEL = "SENTINEL_API_KEY_DO_NOT_LEAK";
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("SENTINEL never appears in logger calls or tool result", async () => {
+    globalThis.fetch = makeDispatchFetch({ threadId: "th-sentinel", runId: "run-sentinel" });
+
+    const { api, tools, logger } = makeMockApi({
+      pluginConfig: {
+        langgraphBaseUrl: "http://lg.test:2024",
+        langgraphApiKey: SENTINEL,
+      },
+    });
+    entry.register(api as never);
+
+    const result = await tools["langgraph_dispatch"]!.execute("tc", {
+      workflow: "fleet",
+      input: { ticket_id: "T-sentinel" },
+    });
+
+    // The tool result must not contain the sentinel
+    const resultStr = JSON.stringify(result);
+    expect(resultStr).not.toContain(SENTINEL);
+
+    // No logger call must contain the sentinel
+    for (const { msg } of logger.messages) {
+      expect(msg).not.toContain(SENTINEL);
     }
   });
 });

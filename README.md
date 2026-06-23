@@ -122,9 +122,9 @@ The token is validated by the plugin host only. It is **not** forwarded to LangG
 
 ### `langgraphApiKey`
 
-When set, the plugin includes it as `X-Api-Key` on all outbound LangGraph HTTP requests — required for [LangSmith Platform](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph offering). It is not required for `langgraph dev` or self-hosted Aegra deployments, and is simply omitted from headers when not configured.
+When set, the plugin includes it as `x-api-key` on all outbound LangGraph HTTP requests — required for [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph). It is not required for `langgraph dev` or self-hosted Aegra deployments, and is simply omitted from headers when not configured.
 
-The key is stored in plugin config (`~/.openclaw/openclaw.json`). It is **never logged** — not in info/warn/error messages, not in flow metadata, not in debug traces.
+The key is stored in plugin config (`~/.openclaw/openclaw.json`). The plugin does not log or include the API key in flow metadata, wake messages, or debug output. It may still appear in HTTP error response bodies (`LanggraphHttpError.body`) if a misbehaving upstream echoes the header — callers should not log error bodies verbatim.
 
 ### Reporting vulnerabilities
 

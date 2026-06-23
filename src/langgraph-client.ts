@@ -21,11 +21,17 @@ export type LanggraphClientOptions = {
   /** Per-request timeout in ms. Defaults to 10s. */
   timeoutMs?: number;
   /**
-   * API key for LangSmith Platform. When set, sent as `X-Api-Key` on every
+   * API key for LangSmith Deployment. When set, sent as `x-api-key` on every
    * outbound request. Not required for `langgraph dev` or self-hosted Aegra
    * deployments. Do NOT log this value.
    */
   apiKey?: string;
+  /**
+   * Auth scheme sent as `x-auth-scheme` alongside `x-api-key`.
+   * Required for LangSmith Fleet deployments (value: `"langsmith-api-key"`).
+   * Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.
+   */
+  authScheme?: string;
 };
 
 export type LanggraphCreateRunOptions = {
@@ -122,11 +128,13 @@ export class LanggraphClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly apiKey: string | undefined;
+  private readonly authScheme: string | undefined;
 
   constructor(opts: LanggraphClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.timeoutMs = opts.timeoutMs ?? 10_000;
-    this.apiKey = opts.apiKey;
+    this.apiKey = opts.apiKey?.trim() || undefined;
+    this.authScheme = opts.authScheme?.trim() || undefined;
   }
 
   async ok(): Promise<boolean> {
@@ -258,7 +266,8 @@ export class LanggraphClient {
     try {
       const reqHeaders: Record<string, string> = {};
       if (init.body !== undefined) reqHeaders["content-type"] = "application/json";
-      if (this.apiKey) reqHeaders["X-Api-Key"] = this.apiKey;
+      if (this.apiKey) reqHeaders["x-api-key"] = this.apiKey;
+      if (this.authScheme) reqHeaders["x-auth-scheme"] = this.authScheme;
       const res = await fetch(this.baseUrl + path, {
         method: init.method,
         headers: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,

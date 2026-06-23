@@ -32,7 +32,7 @@ import { parseMaybeJson } from "./utils.js";
 
 const WEBHOOK_PATH = "/plugins/openclaw-langgraph-bridge/events";
 
-const ConfigSchema = Type.Object({
+export const ConfigSchema = Type.Object({
   langgraphBaseUrl: Type.Optional(
     Type.String({
       description: "Base URL of the LangGraph server. Dispatch fails fast when unset.",
@@ -84,7 +84,15 @@ const ConfigSchema = Type.Object({
   langgraphApiKey: Type.Optional(
     Type.String({
       description:
-        "API key for LangSmith Platform (LangChain's hosted LangGraph offering). Sent as X-Api-Key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments.",
+        "API key for LangSmith Deployment (LangChain's hosted LangGraph). Sent as x-api-key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments.",
+      minLength: 1,
+      pattern: "^[A-Za-z0-9._\\-+/=]+$",
+    }),
+  ),
+  langgraphAuthScheme: Type.Optional(
+    Type.String({
+      description:
+        'Auth scheme sent as x-auth-scheme alongside x-api-key. Required for LangSmith Fleet deployments (value: "langsmith-api-key"). Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.',
     }),
   ),
 });
@@ -230,6 +238,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         const timeoutMs = config.defaultTimeoutMs ?? 10_000;
         const allowed = config.allowedWorkflows;
         const langgraphApiKey = config.langgraphApiKey;
+        const langgraphAuthScheme = config.langgraphAuthScheme;
 
         return {
           name: "langgraph_inspect_workflow",
@@ -264,7 +273,12 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               });
             }
 
-            const client = new LanggraphClient({ baseUrl, timeoutMs, apiKey: langgraphApiKey });
+            const client = new LanggraphClient({
+              baseUrl,
+              timeoutMs,
+              apiKey: langgraphApiKey,
+              authScheme: langgraphAuthScheme,
+            });
             try {
               const schemas = await client.getAssistantSchemas(workflowId);
               return jsonResult({
@@ -306,6 +320,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         const timeoutMs = config.defaultTimeoutMs ?? 10_000;
         const allowedWorkflows = config.allowedWorkflows;
         const langgraphApiKey = config.langgraphApiKey;
+        const langgraphAuthScheme = config.langgraphAuthScheme;
 
         return {
           name: "langgraph_list_workflows",
@@ -325,7 +340,12 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
 
             const allowlistActive = Array.isArray(allowedWorkflows) && allowedWorkflows.length > 0;
 
-            const client = new LanggraphClient({ baseUrl, timeoutMs, apiKey: langgraphApiKey });
+            const client = new LanggraphClient({
+              baseUrl,
+              timeoutMs,
+              apiKey: langgraphApiKey,
+              authScheme: langgraphAuthScheme,
+            });
             try {
               const assistants = await client.searchAssistants(100);
               const workflows = assistants.map((a) => ({
@@ -366,6 +386,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         const allowed = config.allowedWorkflows;
         const callbackPublic = config.callbackPublicBaseUrl;
         const langgraphApiKey = config.langgraphApiKey;
+        const langgraphAuthScheme = config.langgraphAuthScheme;
 
         return {
           name: "langgraph_dispatch",
@@ -405,7 +426,12 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               });
             }
 
-            const client = new LanggraphClient({ baseUrl, timeoutMs, apiKey: langgraphApiKey });
+            const client = new LanggraphClient({
+              baseUrl,
+              timeoutMs,
+              apiKey: langgraphApiKey,
+              authScheme: langgraphAuthScheme,
+            });
             const decisionOnly = params.decision_only ?? true;
             const webhookUrl = callbackPublic
               ? callbackPublic.replace(/\/+$/, "") + WEBHOOK_PATH
@@ -477,6 +503,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   assistantId: params.workflow,
                   input: params.input ?? null,
                   apiKey: langgraphApiKey,
+                  authScheme: langgraphAuthScheme,
                   // Security (#11): callbackToken is NEVER sent to LangGraph.
                   // It is used solely to authenticate inbound webhook POSTs
                   // from LangGraph (checked in webhook-handler.ts:buildHandler
@@ -750,6 +777,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               // initial dispatch — same processEvent, same wakeAgent.
               const timeoutMs = config.defaultTimeoutMs ?? 10_000;
               const langgraphApiKey = config.langgraphApiKey;
+              const langgraphAuthScheme = config.langgraphAuthScheme;
               const flowRevisionForSubscriber = Number(candidate.revision ?? 0);
               const onEvent = (body: IncomingEventBody) => {
                 try {
@@ -779,6 +807,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   assistantId: workflow,
                   command: { resume: normalizedPayload },
                   apiKey: langgraphApiKey,
+                  authScheme: langgraphAuthScheme,
                   metadata: {
                     openclaw_flow_id: candidate.flowId,
                     openclaw_session_key: sessionKey,
