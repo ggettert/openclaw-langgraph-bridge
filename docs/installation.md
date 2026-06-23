@@ -44,10 +44,16 @@ Verify each before starting.
    ```bash
    node --version  # v22.x.x
    ```
-3. **A reachable LangGraph server** — the URL the plugin will dispatch to. Options:
-   - `langgraph dev` for local testing against a local workflow
-   - [Aegra](https://docs.aegra.dev) for self-hosted production
-   - [LangSmith Platform](https://docs.smith.langchain.com/langgraph-platform) for cloud-managed (note: LangSmith requires an API key, tracked as future issue #29 — not yet supported by this plugin)
+3. **A reachable LangGraph server** — the URL the plugin will dispatch to. Choose the deployment target that matches your setup:
+
+   | Deployment target | API key needed? | Notes |
+   |---|---|---|
+   | `langgraph dev` (local POC) | No | Zero-config local dev server |
+   | [Aegra](https://docs.aegra.dev) (self-hosted production) | No | Drop-in LangGraph server with Postgres + Redis |
+   | [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph, cloud) | **Yes** | Set `langgraphApiKey` in plugin config (see below) |
+   | LangSmith Fleet | **Yes** | Set both `langgraphApiKey` and `langgraphAuthScheme: "langsmith-api-key"` |
+
+   For LangSmith Deployment or Fleet, generate an API key in the LangSmith dashboard (env var convention: `LANGGRAPH_API_KEY`) and supply it as `langgraphApiKey` in plugin config. Rotating `langgraphApiKey` requires a gateway restart for the new value to take effect (tool definitions cache config at plugin registration time).
 4. **A `callbackToken`** — a pre-shared secret the plugin uses to authenticate inbound webhook POSTs. Generate one if you don't have one:
    ```bash
    openssl rand -hex 32
@@ -165,6 +171,8 @@ Under `plugins.entries.openclaw-langgraph-bridge`:
 | `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When non-empty, unlisted workflows are refused. Empty or unset = all permitted. |
 | `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client (ms). Bump for slow cold-start servers. |
 | `summaryMaxChars` | — | `4000` | Maximum characters for event summaries in wake messages. Longer summaries are truncated with a ` …[truncated]` suffix. |
+| `langgraphApiKey` | — | — | API key for LangSmith Deployment or Fleet. When set, sent as `x-api-key` on all outbound LangGraph HTTP requests. Not required for `langgraph dev` or Aegra deployments. |
+| `langgraphAuthScheme` | — | — | Auth scheme sent as `x-auth-scheme` alongside `x-api-key`. Set to `"langsmith-api-key"` for LangSmith Fleet deployments. Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev. |
 
 ### Allowlist hardening (`allowedWorkflows`)
 
@@ -271,11 +279,35 @@ Set `langgraphBaseUrl: "http://localhost:2024"` in config.
 
 Set `langgraphBaseUrl` to your Aegra deployment URL.
 
-### LangSmith Platform (cloud)
+### LangSmith Deployment (cloud)
 
-[LangSmith Platform](https://docs.smith.langchain.com/langgraph-platform) provides managed LangGraph hosting. Set `langgraphBaseUrl` to the deployment URL from the LangSmith dashboard.
+[LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph) provides managed LangGraph hosting. Set `langgraphBaseUrl` to the deployment URL from the LangSmith dashboard, and set `langgraphApiKey` to the API key from your LangSmith account settings (env var: `LANGGRAPH_API_KEY`).
 
-> **Note:** LangSmith Platform requires authentication via a LangGraph API key. Outbound API key auth from this plugin is tracked as issue #29 and has not shipped yet. Until #29 lands, self-hosted Aegra or local `langgraph dev` are the supported options.
+Example config:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-langgraph-bridge": {
+        "enabled": true,
+        "config": {
+          "langgraphBaseUrl": "https://your-deployment.api.langsmith.com",
+          "langgraphApiKey": "ls__your_api_key_here",
+          "callbackToken": "REPLACE_WITH_YOUR_TOKEN",
+          "callbackPublicBaseUrl": "http://<your-bot-host>:<gateway-port>"
+        }
+      }
+    }
+  }
+}
+```
+
+The plugin sends `x-api-key: <langgraphApiKey>` on all outbound HTTP calls to the LangGraph server (thread creation, run dispatch, SSE stream, schema and assistant list endpoints).
+
+For LangSmith Fleet deployments, also set `langgraphAuthScheme: "langsmith-api-key"` — Fleet requires both `x-api-key` and `x-auth-scheme: langsmith-api-key` headers.
+
+> **⚠️ Verification status:** `langgraphApiKey` and `langgraphAuthScheme` are covered by unit tests against mocked HTTP only. As of v1.0, no end-to-end verification against a live LangSmith Deployment or Fleet endpoint has been performed. Please [file an issue](https://github.com/ggettert/openclaw-langgraph-bridge/issues) if you hit auth-related failures so we can pin down the wire-format quirk.
 
 ---
 
@@ -365,7 +397,7 @@ Fixed in the v1.0 launch-prep cycle (PR #47, issue #15). The `typebox` (unscoped
 ## Known open issues (as of v1.0 launch-prep)
 
 - **#9**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.
-- **#29**: Outbound LangGraph API key auth not yet supported (needed for LangSmith Platform).
+
 
 Full list: https://github.com/ggettert/openclaw-langgraph-bridge/issues
 

@@ -672,3 +672,148 @@ describe("dispatchAndStream — request body shape", () => {
     expect("input" in body).toBe(false);
   });
 });
+
+describe("dispatchAndStream — x-api-key header", () => {
+  function makeHeaderCapturingFetch() {
+    const capture: { headers?: Record<string, string> } = {};
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      capture.headers = init.headers as Record<string, string>;
+      return new Response("", { status: 200 });
+    });
+    return { fetchImpl, capture };
+  }
+
+  it("sends x-api-key header when apiKey is configured", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      apiKey: "test-api-key",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers?.["x-api-key"]).toBe("test-api-key");
+  });
+
+  it("omits x-api-key header when apiKey is not configured", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers).toBeDefined();
+    expect(capture.headers).not.toHaveProperty("x-api-key");
+  });
+
+  it("always sends content-type and accept regardless of apiKey", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: null,
+      apiKey: "k",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers?.["content-type"]).toBe("application/json");
+    expect(capture.headers?.["accept"]).toBe("text/event-stream");
+    expect(capture.headers?.["x-api-key"]).toBe("k");
+  });
+});
+
+describe("dispatchAndStream — x-auth-scheme header", () => {
+  function makeHeaderCapturingFetch() {
+    const capture: { headers?: Record<string, string> } = {};
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      capture.headers = init.headers as Record<string, string>;
+      return new Response("", { status: 200 });
+    });
+    return { fetchImpl, capture };
+  }
+
+  it("sends x-auth-scheme alongside x-api-key when authScheme is configured", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      apiKey: "fleet-key",
+      authScheme: "langsmith-api-key",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers?.["x-api-key"]).toBe("fleet-key");
+    expect(capture.headers?.["x-auth-scheme"]).toBe("langsmith-api-key");
+  });
+
+  it("omits x-auth-scheme when authScheme is not configured", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      apiKey: "some-key",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers).toBeDefined();
+    expect(capture.headers).not.toHaveProperty("x-auth-scheme");
+  });
+
+  it("sends x-auth-scheme and x-api-key together on the same request", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: null,
+      apiKey: "lsv2_key",
+      authScheme: "langsmith-api-key",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers?.["x-api-key"]).toBe("lsv2_key");
+    expect(capture.headers?.["x-auth-scheme"]).toBe("langsmith-api-key");
+    expect(capture.headers?.["content-type"]).toBe("application/json");
+    expect(capture.headers?.["accept"]).toBe("text/event-stream");
+  });
+
+  it("omits x-auth-scheme when authScheme is set but apiKey is not set", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: null,
+      authScheme: "langsmith-api-key",
+      // no apiKey — x-auth-scheme must be suppressed
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers).not.toHaveProperty("x-auth-scheme");
+    expect(capture.headers).not.toHaveProperty("x-api-key");
+  });
+});

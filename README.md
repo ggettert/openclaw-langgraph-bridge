@@ -120,9 +120,11 @@ The plugin registers a POST route at `/plugins/openclaw-langgraph-bridge/events`
 
 The token is validated by the plugin host only. It is **not** forwarded to LangGraph, not included in SSE subscription requests, and not visible to workflow authors. Workflow authors embed it in their deployment config (e.g. as a LangGraph environment variable) to POST events back.
 
-### `langgraphApiKey` (future)
+### `langgraphApiKey`
 
-Authentication of *outbound* calls from the plugin to LangGraph (for self-hosted deployments that require it) is tracked in issue #29 and has not shipped yet. When it lands, the key will be stored in plugin config and sent as `X-Api-Key: <token>` on all outbound LangGraph HTTP requests — as required by LangSmith Platform. See [issue #29](https://github.com/ggettert/openclaw-langgraph-bridge/issues/29) for implementation details.
+When set, the plugin includes it as `x-api-key` on all outbound LangGraph HTTP requests — required for [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph). It is not required for `langgraph dev` or self-hosted Aegra deployments, and is simply omitted from headers when not configured.
+
+The key is stored in plugin config (`~/.openclaw/openclaw.json`). The plugin does not log or include the API key in flow metadata, wake messages, or debug output. It may still appear in HTTP error response bodies (`LanggraphHttpError.body`) if a misbehaving upstream echoes the header — callers should not log error bodies verbatim.
 
 ### Reporting vulnerabilities
 

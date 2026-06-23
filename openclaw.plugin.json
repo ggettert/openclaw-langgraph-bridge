@@ -35,6 +35,18 @@
         "description": "Per-request timeout for the LangGraph HTTP client. Default 10000.",
         "minimum": 100,
         "maximum": 120000
+      },
+      "langgraphApiKey": {
+        "type": "string",
+        "description": "API key for LangSmith Deployment (LangChain's hosted LangGraph). Sent as x-api-key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments.",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9._\\-+/=]+$"
+      },
+      "langgraphAuthScheme": {
+        "type": "string",
+        "description": "Auth scheme sent as x-auth-scheme alongside x-api-key. Required for LangSmith Fleet deployments (value: 'langsmith-api-key'). Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9._\\-+/=]+$"
       }
     }
   },

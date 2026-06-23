@@ -381,6 +381,17 @@ export type StreamingDispatchParams = {
   input?: Record<string, unknown> | null;
   command?: { resume?: unknown; [k: string]: unknown } | null;
   metadata?: Record<string, unknown>;
+  /**
+   * API key for LangSmith Deployment. When set, sent as `x-api-key` on the
+   * streaming request. Do NOT log this value.
+   */
+  apiKey?: string;
+  /**
+   * Auth scheme sent as `x-auth-scheme` alongside `x-api-key`.
+   * Required for LangSmith Fleet deployments (value: `"langsmith-api-key"`).
+   * Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.
+   */
+  authScheme?: string;
   handlers: StreamHandlers;
   fetchImpl?: typeof fetch;
 };
@@ -393,8 +404,21 @@ export type StreamingDispatchParams = {
  * background.
  */
 export function dispatchAndStream(params: StreamingDispatchParams): AbortController {
-  const { baseUrl, threadId, flowId, assistantId, input, command, metadata, handlers, fetchImpl } =
-    params;
+  const {
+    baseUrl,
+    threadId,
+    flowId,
+    assistantId,
+    input,
+    command,
+    metadata,
+    apiKey,
+    authScheme,
+    handlers,
+    fetchImpl,
+  } = params;
+  const trimmedApiKey = apiKey?.trim() || undefined;
+  const trimmedAuthScheme = authScheme?.trim() || undefined;
 
   const controller = new AbortController();
   const url = baseUrl.replace(/\/+$/, "") + `/threads/${encodeURIComponent(threadId)}/runs/stream`;
@@ -403,12 +427,15 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
     let sawTerminal = false;
     const f = fetchImpl ?? fetch;
     try {
+      const streamHeaders: Record<string, string> = {
+        "content-type": "application/json",
+        accept: "text/event-stream",
+      };
+      if (trimmedApiKey) streamHeaders["x-api-key"] = trimmedApiKey;
+      if (trimmedApiKey && trimmedAuthScheme) streamHeaders["x-auth-scheme"] = trimmedAuthScheme;
       const res = await f(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-        },
+        headers: streamHeaders,
         // Resume runs send `command` (e.g. {resume: ...}); initial runs
         // send `input`. Sending both is undefined behaviour per the
         // RunCreateStateful schema, so only the relevant key is included.
