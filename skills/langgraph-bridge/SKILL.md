@@ -634,13 +634,13 @@ Use direct HTTP calls when:
 
 **Check thread state:**
 ```bash
-curl -s http://langgraph.example.local:2024/threads/<langgraph_thread_id>/state \
+curl -s http://localhost:2024/threads/<langgraph_thread_id>/state \
   | jq '{status: .status, next: .next, values_keys: (.values // {} | keys)}'
 ```
 
 **Resume via direct API (when plugin resume fails):**
 ```bash
-curl -s -X POST http://langgraph.example.local:2024/threads/<tid>/runs \
+curl -s -X POST http://localhost:2024/threads/<tid>/runs \
   -H 'Content-Type: application/json' \
   -d '{
     "assistant_id": "fleet",
@@ -669,7 +669,7 @@ These live under `plugins.entries.openclaw-langgraph-bridge.config`. In normal o
 
 | key | default | purpose |
 |---|---|---|
-| `langgraphBaseUrl` | (required) | Base URL of the LangGraph server, e.g. `http://langgraph.example.local:2024` |
+| `langgraphBaseUrl` | (required) | Base URL of the LangGraph server, e.g. `http://langgraph.example.com:2024` |
 | `callbackToken` | (required) | Bearer token for inbound webhook authentication |
 | `callbackPublicBaseUrl` | (optional) | Public base URL the LangGraph server POSTs events to (appended with `/plugins/openclaw-langgraph-bridge/events`) |
 | `agentId` | `"main"` | Agent id to wake. Only change if you have multiple named agents on one gateway |

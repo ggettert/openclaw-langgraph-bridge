@@ -102,16 +102,16 @@ echo "Installed version: $INSTALLED_VERSION"
 
 ### Path B: git source (pinned tag)
 
-For development bots or when you need a specific commit not yet released:
+For development bots or when you need a specific commit not yet released. Replace `vX.Y.Z` below with the latest release tag — see [Releases](https://github.com/ggettert/openclaw-langgraph-bridge/releases):
 
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
 cd "$EXT_DIR"
-git clone --depth=1 --branch v1.0.0 https://github.com/ggettert/openclaw-langgraph-bridge.git .
+git clone --depth=1 --branch vX.Y.Z https://github.com/ggettert/openclaw-langgraph-bridge.git .
 npm ci
 npm run build
-npm test  # expect 146 passing
+npm test  # full suite passes
 ```
 
 ### Path C: From npm (future)
@@ -147,7 +147,7 @@ Under `plugins.entries.openclaw-langgraph-bridge`:
       "openclaw-langgraph-bridge": {
         "enabled": true,
         "config": {
-          "langgraphBaseUrl": "http://langgraph.example.local:2024",
+          "langgraphBaseUrl": "http://langgraph.example.com:2024",
           "callbackToken": "REPLACE_WITH_YOUR_TOKEN",
           "callbackPublicBaseUrl": "http://<your-bot-host>:<gateway-port>",
           "agentId": "main",
@@ -236,7 +236,7 @@ sudo journalctl -u openclaw-gateway -n 30 --no-pager | grep langgraph-bridge
 ### Verify LangGraph is reachable
 
 ```bash
-curl -sS -m 5 http://langgraph.example.local:2024/ok
+curl -sS -m 5 http://localhost:2024/ok
 # Expected: {"ok":true}
 ```
 
@@ -394,12 +394,9 @@ Fixed in the v1.0 launch-prep cycle (PR #47, issue #15). The `typebox` (unscoped
 
 ---
 
-## Known open issues (as of v1.0 launch-prep)
+## Known open issues
 
-- **#9**: Concurrent resume calls can open duplicate SSE streams. Low probability; user-triggerable only via rapid double-submit.
-
-
-Full list: https://github.com/ggettert/openclaw-langgraph-bridge/issues
+For the live list, see the [issue tracker](https://github.com/ggettert/openclaw-langgraph-bridge/issues).
 
 ---
 

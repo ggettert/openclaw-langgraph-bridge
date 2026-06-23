@@ -13,7 +13,7 @@ requiring a real application graph or LangSmith account.
 ## Prerequisites
 
 ```bash
-pip install langgraph-cli
+pip install "langgraph-cli[inmem]"
 ```
 
 ## Running locally
