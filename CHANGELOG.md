@@ -6,36 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (currently pre-1.0; minor versions may include breaking changes).
 
+Each entry references the originating PR. To find the exact commits, see the PR's `Files changed` tab or `git log --grep #<pr-number>`.
+
 ## [Unreleased]
-
-### Fixed
-- Concurrent `langgraph_resume` calls on the same flow_id no longer open duplicate SSE streams (#9). The second concurrent call now returns `resume_already_in_progress` instead of racing through the TOCTOU window.
-
-### Changed
-- Relicensed from Apache 2.0 to MIT to match the OpenClaw ecosystem (core OpenClaw, ClawHub, and related repos are MIT). Sole copyright holder consented to relicense.
-- Removed organizational references in docs/comments; copyright holder is now `Grace Gettert`.
 
 ### Added
 - CONTRIBUTING.md, CODE_OF_CONDUCT.md (PR #47)
 - CHANGELOG.md (this file)
 - `docs/workflow-contract.md` — canonical workflow integration guide for OSS users (PR #47)
 - README badges: npm version, CI status, license (PR #47)
+- Integration test suite covering end-to-end SSE and webhook flows. (PR #56, closes #49)
 
 ### Changed
+- Relicensed from Apache 2.0 to MIT to match the OpenClaw ecosystem (core OpenClaw, ClawHub, and related repos are MIT). Sole copyright holder consented to relicense. (PR #58)
+- Removed organizational references in docs/comments; copyright holder is now `Grace Gettert`. (PR #58)
 - `decision_only` parameter now functions per its name. When `true` (default), milestone events update flow state silently but do **not** wake the agent. When `false`, milestone events also wake the agent. Decision, HITL, and terminal events always wake the agent regardless of this setting. (#6, PR #47)
 - README Status section updated to stable pre-1.0 framing; links to CHANGELOG.md for migration notes (PR #47)
-- `docs/installation.md` rewritten for OSS users: generic prereqs, four install paths, full config reference, troubleshooting (PR #47)
+- `docs/installation.md` rewritten for OSS users: generic prereqs, install paths, full config reference, troubleshooting (PR #47)
 - CONTRIBUTING.md trimmed and reorganized; Releases section added (PR #47)
 - CONTRIBUTING.md "Where to File Things" — security row now points directly to GitHub Security Advisories (PR #47)
+- Docs polish: workflow-contract.md, phase-event-contract.md, installation.md, README updated for OSS clarity. (PR #59)
 
 ### Removed
 - `LanggraphClient.resumeRun()` — dead code with wrong wire format. Use `dispatchAndStream` for resume operations. (#8, PR #47)
 - `SECURITY.md` — security disclosure is via GitHub Security Advisories (see README Security section and CONTRIBUTING.md). (PR #47)
 
 ### Fixed
+- Concurrent `langgraph_resume` calls on the same flow_id no longer open duplicate SSE streams (#9, PR #62). The second concurrent call now returns `resume_already_in_progress` instead of racing through the TOCTOU window.
 - Orphaned `queued` flow on dispatch failure now tombstoned so `langgraph_inspect` doesn't surface stale records. (#7, PR #47)
 - `typebox` package replaced with canonical `@sinclair/typebox`. (#15, PR #47)
 - Release tarball no longer ships devDependencies; `npm ci --omit=dev --omit=optional --omit=peer` + verification step in release workflow. (#23, PR #47)
+- LangSmith Deployment and Fleet auth: `x-api-key` header now sent on all outbound LangGraph HTTP requests when `langgraphApiKey` is configured; `x-auth-scheme` sent alongside it when `langgraphAuthScheme` is also set. (#29, PR #57)
 
 ---
 
