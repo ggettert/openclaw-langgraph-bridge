@@ -81,6 +81,12 @@ const ConfigSchema = Type.Object({
       examples: [4000],
     }),
   ),
+  langgraphApiKey: Type.Optional(
+    Type.String({
+      description:
+        "API key for LangSmith Platform (LangChain's hosted LangGraph offering). Sent as X-Api-Key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments.",
+    }),
+  ),
 });
 
 type PluginConfig = Static<typeof ConfigSchema>;
@@ -223,6 +229,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         const baseUrl = config.langgraphBaseUrl;
         const timeoutMs = config.defaultTimeoutMs ?? 10_000;
         const allowed = config.allowedWorkflows;
+        const langgraphApiKey = config.langgraphApiKey;
 
         return {
           name: "langgraph_inspect_workflow",
@@ -257,7 +264,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               });
             }
 
-            const client = new LanggraphClient({ baseUrl, timeoutMs });
+            const client = new LanggraphClient({ baseUrl, timeoutMs, apiKey: langgraphApiKey });
             try {
               const schemas = await client.getAssistantSchemas(workflowId);
               return jsonResult({
@@ -298,6 +305,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         const baseUrl = config.langgraphBaseUrl;
         const timeoutMs = config.defaultTimeoutMs ?? 10_000;
         const allowedWorkflows = config.allowedWorkflows;
+        const langgraphApiKey = config.langgraphApiKey;
 
         return {
           name: "langgraph_list_workflows",
@@ -317,7 +325,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
 
             const allowlistActive = Array.isArray(allowedWorkflows) && allowedWorkflows.length > 0;
 
-            const client = new LanggraphClient({ baseUrl, timeoutMs });
+            const client = new LanggraphClient({ baseUrl, timeoutMs, apiKey: langgraphApiKey });
             try {
               const assistants = await client.searchAssistants(100);
               const workflows = assistants.map((a) => ({
@@ -357,6 +365,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         const timeoutMs = config.defaultTimeoutMs ?? 10_000;
         const allowed = config.allowedWorkflows;
         const callbackPublic = config.callbackPublicBaseUrl;
+        const langgraphApiKey = config.langgraphApiKey;
 
         return {
           name: "langgraph_dispatch",
@@ -396,7 +405,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               });
             }
 
-            const client = new LanggraphClient({ baseUrl, timeoutMs });
+            const client = new LanggraphClient({ baseUrl, timeoutMs, apiKey: langgraphApiKey });
             const decisionOnly = params.decision_only ?? true;
             const webhookUrl = callbackPublic
               ? callbackPublic.replace(/\/+$/, "") + WEBHOOK_PATH
@@ -467,6 +476,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   flowId: flow.flowId,
                   assistantId: params.workflow,
                   input: params.input ?? null,
+                  apiKey: langgraphApiKey,
                   // Security (#11): callbackToken is NEVER sent to LangGraph.
                   // It is used solely to authenticate inbound webhook POSTs
                   // from LangGraph (checked in webhook-handler.ts:buildHandler
@@ -739,6 +749,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               // instead of `input`. Identical subscriber lifecycle to
               // initial dispatch — same processEvent, same wakeAgent.
               const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+              const langgraphApiKey = config.langgraphApiKey;
               const flowRevisionForSubscriber = Number(candidate.revision ?? 0);
               const onEvent = (body: IncomingEventBody) => {
                 try {
@@ -767,6 +778,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   flowId: candidate.flowId!,
                   assistantId: workflow,
                   command: { resume: normalizedPayload },
+                  apiKey: langgraphApiKey,
                   metadata: {
                     openclaw_flow_id: candidate.flowId,
                     openclaw_session_key: sessionKey,
