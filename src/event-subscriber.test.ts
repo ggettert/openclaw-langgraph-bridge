@@ -672,3 +672,63 @@ describe("dispatchAndStream — request body shape", () => {
     expect("input" in body).toBe(false);
   });
 });
+
+describe("dispatchAndStream — X-Api-Key header", () => {
+  function makeHeaderCapturingFetch() {
+    const capture: { headers?: Record<string, string> } = {};
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      capture.headers = init.headers as Record<string, string>;
+      return new Response("", { status: 200 });
+    });
+    return { fetchImpl, capture };
+  }
+
+  it("sends X-Api-Key header when apiKey is configured", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      apiKey: "test-api-key",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(capture.headers?.["X-Api-Key"]).toBe("test-api-key");
+  });
+
+  it("omits X-Api-Key header when apiKey is not configured", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: { ticket_id: "X" },
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(capture.headers).not.toHaveProperty("X-Api-Key");
+  });
+
+  it("always sends content-type and accept regardless of apiKey", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: null,
+      apiKey: "k",
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(capture.headers?.["content-type"]).toBe("application/json");
+    expect(capture.headers?.["accept"]).toBe("text/event-stream");
+    expect(capture.headers?.["X-Api-Key"]).toBe("k");
+  });
+});

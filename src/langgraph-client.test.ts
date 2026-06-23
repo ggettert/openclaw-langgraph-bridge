@@ -166,6 +166,64 @@ describe("LanggraphClient", () => {
     });
   });
 
+  describe("X-Api-Key header (apiKey option)", () => {
+    it("sends X-Api-Key header on all requests when apiKey is configured", async () => {
+      const capturedHeaders: Record<string, string>[] = [];
+      mockFetch(async (_input, init) => {
+        capturedHeaders.push({ ...(init?.headers as Record<string, string>) });
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      const client = new LanggraphClient({
+        baseUrl: "http://lg",
+        apiKey: "secret-api-key",
+      });
+      await client.createThread();
+      expect(capturedHeaders[0]!["X-Api-Key"]).toBe("secret-api-key");
+    });
+
+    it("omits X-Api-Key header when apiKey is not configured", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      await client.createThread();
+      expect(capturedHeaders).not.toHaveProperty("X-Api-Key");
+    });
+
+    it("sends X-Api-Key on GET requests (no body)", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+      const client = new LanggraphClient({
+        baseUrl: "http://lg",
+        apiKey: "my-key",
+      });
+      await client.getAssistantSchemas("fleet");
+      expect(capturedHeaders?.["X-Api-Key"]).toBe("my-key");
+      // content-type should NOT be sent on GET (no body)
+      expect(capturedHeaders).not.toHaveProperty("content-type");
+    });
+
+    it("sends both content-type and X-Api-Key on POST requests when apiKey is configured", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify([]), { status: 200 });
+      });
+      const client = new LanggraphClient({
+        baseUrl: "http://lg",
+        apiKey: "my-key",
+      });
+      await client.searchAssistants();
+      expect(capturedHeaders?.["content-type"]).toBe("application/json");
+      expect(capturedHeaders?.["X-Api-Key"]).toBe("my-key");
+    });
+  });
+
   describe("searchAssistants", () => {
     const mockAssistants: LanggraphAssistant[] = [
       {

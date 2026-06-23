@@ -813,3 +813,93 @@ describe("normalizeResumePayload", () => {
     expect(result.decision).toBe("approve");
   });
 });
+
+// ---------------------------------------------------------------------------
+// langgraphApiKey integration — X-Api-Key header presence/absence
+// ---------------------------------------------------------------------------
+
+describe("langgraphApiKey — X-Api-Key header integration", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /**
+   * Build a fetch mock that captures all request headers and behaves like
+   * a normal LangGraph server (thread + SSE stream with metadata frame).
+   */
+  function makeHeaderCapturingFetch(threadId = "th-x", runId = "run-x") {
+    const capturedHeaders: Array<{ url: string; headers: Record<string, string> }> = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      capturedHeaders.push({ url, headers: (init.headers ?? {}) as Record<string, string> });
+      if (url.includes("/threads") && !url.includes("/runs")) {
+        return new Response(JSON.stringify({ thread_id: threadId }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/runs/stream")) {
+        const frame = `event: metadata\r\ndata: ${JSON.stringify({ run_id: runId })}\r\n\r\n`;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(frame));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    return { fetchImpl, capturedHeaders };
+  }
+
+  it("sends X-Api-Key on all outbound calls when langgraphApiKey is configured", async () => {
+    const { fetchImpl, capturedHeaders } = makeHeaderCapturingFetch();
+    globalThis.fetch = fetchImpl as unknown as typeof fetch;
+
+    const { api, tools } = makeMockApi({
+      pluginConfig: {
+        langgraphBaseUrl: "http://lg.test:2024",
+        langgraphApiKey: "integration-test-key",
+      },
+    });
+    entry.register(api as never);
+
+    const result = (await tools["langgraph_dispatch"]!.execute("tc", {
+      workflow: "fleet",
+      input: { ticket_id: "T-1" },
+    })) as { details?: { status?: string } };
+
+    expect(result.details?.status).toBe("accepted");
+    // Every outbound call (createThread + stream) must have X-Api-Key
+    expect(capturedHeaders.length).toBeGreaterThanOrEqual(2);
+    for (const { headers } of capturedHeaders) {
+      expect(headers["X-Api-Key"]).toBe("integration-test-key");
+    }
+  });
+
+  it("does NOT send X-Api-Key when langgraphApiKey is not configured", async () => {
+    const { fetchImpl, capturedHeaders } = makeHeaderCapturingFetch();
+    globalThis.fetch = fetchImpl as unknown as typeof fetch;
+
+    const { api, tools } = makeMockApi({
+      pluginConfig: {
+        langgraphBaseUrl: "http://lg.test:2024",
+        // no langgraphApiKey
+      },
+    });
+    entry.register(api as never);
+
+    const result = (await tools["langgraph_dispatch"]!.execute("tc", {
+      workflow: "fleet",
+      input: { ticket_id: "T-2" },
+    })) as { details?: { status?: string } };
+
+    expect(result.details?.status).toBe("accepted");
+    for (const { headers } of capturedHeaders) {
+      expect(headers).not.toHaveProperty("X-Api-Key");
+    }
+  });
+});
