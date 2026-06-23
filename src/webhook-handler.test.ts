@@ -1,48 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { processEvent, type WebhookHandlerDeps } from "./webhook-handler.js";
+import { makeFakeDeps } from "./test-harness.js";
 import type { WakeAgentParams } from "./wake-agent.js";
 
-type AnyArgs = unknown[];
-
-function makeDeps() {
-  const calls = {
-    runTask: vi.fn<(...args: AnyArgs) => unknown>(),
-    setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
-    finish: vi.fn<(...args: AnyArgs) => unknown>(),
-    // decision_only=false so milestone tests that assert wake behaviour work.
-    // Tests that specifically test decision_only=true use makeDepsWithDecisionOnly().
-    get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
-      owner_key: "agent:main:dm:user",
-      revision: 1,
-      stateJson: { decision_only: false },
-    })),
-    wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
-  };
-  const deps: WebhookHandlerDeps = {
-    expectedToken: "secret",
-    pluginId: "openclaw-langgraph-bridge",
-    agentId: "main",
-    runtime: {
-      tasks: {
-        managedFlows: {
-          bindSession: () => ({
-            get: calls.get,
-            runTask: calls.runTask,
-            setWaiting: calls.setWaiting,
-            finish: calls.finish,
-          }),
-        },
-      },
-    },
-    wake: calls.wake,
-    // Unit-test queue: call run() synchronously (fire-and-forget) so that
-    // assertions on calls.wake don't need to await async queue drain.
-    enqueueWake: (_key, run) => {
-      void run();
-    },
-  };
-  return { deps, calls };
-}
+// Alias to preserve existing test call sites unchanged.
+const makeDeps = () => makeFakeDeps({ decisionOnly: false });
 
 describe("processEvent — status", () => {
   it("calls runTask, does NOT wake, emits NO system event", () => {
@@ -371,42 +333,8 @@ describe("processEvent — agentId plumbed from deps", () => {
 });
 
 describe("processEvent — decision_only flag (#6)", () => {
-  function makeDepsWithDecisionOnly(decisionOnly: boolean) {
-    const calls = {
-      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
-      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
-      finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      // Embed decision_only in stateJson so processEvent can read it.
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
-        owner_key: "agent:main:dm:user",
-        revision: 1,
-        stateJson: { workflow: "fleet", decision_only: decisionOnly },
-      })),
-      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
-    };
-    const deps: WebhookHandlerDeps = {
-      expectedToken: "secret",
-      pluginId: "openclaw-langgraph-bridge",
-      agentId: "main",
-      runtime: {
-        tasks: {
-          managedFlows: {
-            bindSession: () => ({
-              get: calls.get,
-              runTask: calls.runTask,
-              setWaiting: calls.setWaiting,
-              finish: calls.finish,
-            }),
-          },
-        },
-      },
-      wake: calls.wake,
-      enqueueWake: (_key, run) => {
-        void run();
-      },
-    };
-    return { deps, calls };
-  }
+  // Alias to preserve call sites unchanged.
+  const makeDepsWithDecisionOnly = (decisionOnly: boolean) => makeFakeDeps({ decisionOnly });
 
   it("milestone + decision_only=true → updates flow state but does NOT wake", () => {
     const { deps, calls } = makeDepsWithDecisionOnly(true);
@@ -473,37 +401,7 @@ describe("processEvent — decision_only flag (#6)", () => {
   it("milestone + stateJson missing (no decision_only key) → defaults to true → no wake", () => {
     // Simulate a flow that was dispatched before decision_only was stored,
     // or any flow that has no stateJson. Should default to decision_only=true.
-    const calls = {
-      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
-      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
-      finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-        () => ({ owner_key: "agent:main:dm:user", revision: 1 }),
-        // no stateJson
-      ),
-      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
-    };
-    const deps: WebhookHandlerDeps = {
-      expectedToken: "secret",
-      pluginId: "openclaw-langgraph-bridge",
-      agentId: "main",
-      runtime: {
-        tasks: {
-          managedFlows: {
-            bindSession: () => ({
-              get: calls.get,
-              runTask: calls.runTask,
-              setWaiting: calls.setWaiting,
-              finish: calls.finish,
-            }),
-          },
-        },
-      },
-      wake: calls.wake,
-      enqueueWake: (_key, run) => {
-        void run();
-      },
-    };
+    const { deps, calls } = makeFakeDeps({ flowRecord: { stateJson: null } });
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
       sessionKey: "agent:main:dm:user",
@@ -519,38 +417,7 @@ describe("processEvent — decision_only flag (#6)", () => {
     // Simulate a flow dispatched before #6 — stateJson exists (workflow stored)
     // but the decision_only key was never written into it.
     // Milestone event arrives → no wake fires because default is true.
-    const calls = {
-      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
-      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
-      finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
-        owner_key: "agent:main:dm:user",
-        revision: 1,
-        stateJson: { workflow: "fleet" }, // stateJson present but no decision_only key
-      })),
-      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
-    };
-    const deps: WebhookHandlerDeps = {
-      expectedToken: "secret",
-      pluginId: "openclaw-langgraph-bridge",
-      agentId: "main",
-      runtime: {
-        tasks: {
-          managedFlows: {
-            bindSession: () => ({
-              get: calls.get,
-              runTask: calls.runTask,
-              setWaiting: calls.setWaiting,
-              finish: calls.finish,
-            }),
-          },
-        },
-      },
-      wake: calls.wake,
-      enqueueWake: (_key, run) => {
-        void run();
-      },
-    };
+    const { deps, calls } = makeFakeDeps({ flowRecord: { stateJson: { workflow: "fleet" } } });
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
       sessionKey: "agent:main:dm:user",
@@ -564,38 +431,9 @@ describe("processEvent — decision_only flag (#6)", () => {
 });
 
 describe("processEvent — terminated-flow guard (#10, #16)", () => {
-  function makeDepsWithFlowStatus(flowStatus: string) {
-    const calls = {
-      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
-      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
-      finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(() => ({
-        owner_key: "agent:main:dm:user",
-        revision: 5,
-        status: flowStatus,
-      })),
-      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
-    };
-    const deps: WebhookHandlerDeps = {
-      expectedToken: "secret",
-      pluginId: "openclaw-langgraph-bridge",
-      agentId: "main",
-      runtime: {
-        tasks: {
-          managedFlows: {
-            bindSession: () => ({
-              get: calls.get,
-              runTask: calls.runTask,
-              setWaiting: calls.setWaiting,
-              finish: calls.finish,
-            }),
-          },
-        },
-      },
-      wake: calls.wake,
-    };
-    return { deps, calls };
-  }
+  // Alias to preserve call sites unchanged.
+  const makeDepsWithFlowStatus = (flowStatus: string) =>
+    makeFakeDeps({ flowRecord: { revision: 5, status: flowStatus, stateJson: null } });
 
   it("ignores stale `hitl` after `succeeded` — no setWaiting, no wake (#16)", () => {
     const { deps, calls } = makeDepsWithFlowStatus("succeeded");
@@ -705,38 +543,10 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
   it("missing status field is NOT guarded — processes normally", () => {
     // Backward compat: older flow records may not include `status` in get() return.
     // Use decision_only=false so milestone fires a wake (tests the guard, not the flag).
-    const calls = {
-      runTask: vi.fn<(...args: AnyArgs) => unknown>(),
-      setWaiting: vi.fn<(...args: AnyArgs) => unknown>(),
-      finish: vi.fn<(...args: AnyArgs) => unknown>(),
-      get: vi.fn<(flowId: string) => Record<string, unknown> | undefined>(
-        () => ({
-          owner_key: "agent:main:dm:user",
-          revision: 1,
-          stateJson: { decision_only: false },
-        }),
-        // no status field
-      ),
-      wake: vi.fn<(params: WakeAgentParams, deps?: unknown) => void>(),
-    };
-    const deps: WebhookHandlerDeps = {
-      expectedToken: "secret",
-      pluginId: "openclaw-langgraph-bridge",
-      agentId: "main",
-      runtime: {
-        tasks: {
-          managedFlows: {
-            bindSession: () => ({
-              get: calls.get,
-              runTask: calls.runTask,
-              setWaiting: calls.setWaiting,
-              finish: calls.finish,
-            }),
-          },
-        },
-      },
-      wake: calls.wake,
-    };
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { status: undefined },
+    });
     processEvent({
       body: { kind: "milestone", flow_id: "f1", title: "x" },
       sessionKey: "agent:main:dm:user",
@@ -745,5 +555,215 @@ describe("processEvent — terminated-flow guard (#10, #16)", () => {
     });
     expect(calls.runTask).toHaveBeenCalledOnce();
     expect(calls.wake).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildHandler — HTTP route handler tests
+// ---------------------------------------------------------------------------
+
+import { EventEmitter } from "node:events";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { buildHandler } from "./webhook-handler.js";
+
+/** Build a minimal mock IncomingMessage for testing the HTTP handler. */
+function makeReq(options?: {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}): IncomingMessage {
+  const method = options?.method ?? "POST";
+  const headers = options?.headers ?? { authorization: "Bearer secret" };
+  const bodyStr = options?.body ?? JSON.stringify({ kind: "status", flow_id: "f1", title: "t" });
+
+  const emitter = new EventEmitter() as IncomingMessage;
+  emitter.method = method;
+  emitter.headers = headers;
+  // Simulate async body read
+  setImmediate(() => {
+    emitter.emit("data", Buffer.from(bodyStr, "utf8"));
+    emitter.emit("end");
+  });
+  return emitter;
+}
+
+/** Build a minimal mock ServerResponse that captures status + body. */
+function makeRes(): ServerResponse & { _statusCode: number; _body: string } {
+  const res = {
+    _statusCode: 0,
+    _body: "",
+    statusCode: 0,
+    setHeader: vi.fn(),
+    end: vi.fn((body: string) => {
+      res._statusCode = res.statusCode;
+      res._body = body;
+    }),
+  } as unknown as ServerResponse & { _statusCode: number; _body: string };
+  return res;
+}
+
+describe("buildHandler — HTTP route handler", () => {
+  it("returns 405 for non-POST requests", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({ method: "GET" });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(405);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "method_not_allowed" });
+  });
+
+  it("returns 503 when no callbackToken is configured", async () => {
+    const { deps } = makeFakeDeps({ expectedToken: undefined as unknown as string });
+    // Override to undefined
+    deps.expectedToken = undefined;
+    const handler = buildHandler(deps);
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "callback_token_not_configured" });
+  });
+
+  it("returns 401 for wrong Bearer token", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({ headers: { authorization: "Bearer wrong-token" } });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "unauthorized" });
+  });
+
+  it("returns 401 when Authorization header is missing", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({ headers: {} });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("returns 400 for invalid JSON", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({ body: "not-json" });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "invalid_json" });
+  });
+
+  it("returns 400 for missing flow_id", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({ body: JSON.stringify({ kind: "status" }) });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "missing_flow_id" });
+  });
+
+  it("returns 400 for invalid kind", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({ body: JSON.stringify({ kind: "bogus", flow_id: "f1" }) });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "invalid_kind" });
+  });
+
+  it("returns 404 when flow not found", async () => {
+    const { deps } = makeFakeDeps({ flowRecord: { flowId: "unknown" } });
+    // Override get() to return undefined (flow not found)
+    deps.runtime.tasks.managedFlows.bindSession = () => ({
+      get: () => undefined,
+      runTask: vi.fn(),
+      setWaiting: vi.fn(),
+      finish: vi.fn(),
+    });
+    const handler = buildHandler(deps);
+    const req = makeReq({ body: JSON.stringify({ kind: "status", flow_id: "missing-flow" }) });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "flow_not_found" });
+  });
+
+  it("returns 409 when flow has no owner_key", async () => {
+    const { deps } = makeFakeDeps();
+    deps.runtime.tasks.managedFlows.bindSession = () => ({
+      get: () => ({ revision: 1 }), // no owner_key
+      runTask: vi.fn(),
+      setWaiting: vi.fn(),
+      finish: vi.fn(),
+    });
+    const handler = buildHandler(deps);
+    const req = makeReq({ body: JSON.stringify({ kind: "status", flow_id: "f1" }) });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "flow_missing_owner_key" });
+  });
+
+  it("returns 200 on successful status event", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({
+      body: JSON.stringify({ kind: "status", flow_id: "f1", title: "node:coder", seq: 1 }),
+    });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res._body)).toMatchObject({ status: "ok", action: "flow-update-only" });
+  });
+
+  it("returns 200 on successful milestone event", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({
+      body: JSON.stringify({ kind: "milestone", flow_id: "f1", title: "build:ok" }),
+    });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("returns 200 on successful terminal event", async () => {
+    const { deps } = makeDeps();
+    const handler = buildHandler(deps);
+    const req = makeReq({
+      body: JSON.stringify({
+        kind: "terminal",
+        flow_id: "f1",
+        title: "ok",
+        summary: "done",
+      }),
+    });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("returns 500 when processEvent throws unexpectedly", async () => {
+    const { deps } = makeDeps();
+    // Make runTask throw so processEvent propagates the error.
+    deps.runtime.tasks.managedFlows.bindSession = () => ({
+      get: () => ({ owner_key: "agent:main:dm:user", revision: 1, stateJson: null }),
+      runTask: () => {
+        throw new Error("unexpected db error");
+      },
+      setWaiting: vi.fn(),
+      finish: vi.fn(),
+    });
+    const handler = buildHandler(deps);
+    const req = makeReq({
+      body: JSON.stringify({ kind: "status", flow_id: "f1", title: "t" }),
+    });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res._body)).toMatchObject({ error: "routing_failed" });
   });
 });
