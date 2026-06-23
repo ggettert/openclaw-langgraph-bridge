@@ -18,7 +18,13 @@
 import { describe, it, expect } from "vitest";
 import { dispatchAndStream } from "../event-subscriber.js";
 import { LanggraphClient } from "../langgraph-client.js";
-import { isLangGraphReachable, LANGGRAPH_BASE_URL, LANGGRAPH_WORKFLOW } from "./helpers.js";
+import {
+  isLangGraphReachable,
+  LANGGRAPH_BASE_URL,
+  LANGGRAPH_WORKFLOW,
+  LANGGRAPH_API_KEY,
+  LANGGRAPH_AUTH_SCHEME,
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Top-level availability check
@@ -30,7 +36,12 @@ const reachable = await isLangGraphReachable();
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!reachable)("dispatchAndStream (integration)", () => {
-  const client = new LanggraphClient({ baseUrl: LANGGRAPH_BASE_URL, timeoutMs: 10_000 });
+  const client = new LanggraphClient({
+    baseUrl: LANGGRAPH_BASE_URL,
+    timeoutMs: 10_000,
+    ...(LANGGRAPH_API_KEY && { apiKey: LANGGRAPH_API_KEY }),
+    ...(LANGGRAPH_AUTH_SCHEME && { authScheme: LANGGRAPH_AUTH_SCHEME }),
+  });
 
   it("streams a run and fires onRunId + onClose", async () => {
     const threadId = await client.createThread({
@@ -40,12 +51,20 @@ describe.skipIf(!reachable)("dispatchAndStream (integration)", () => {
 
     let capturedRunId: string | null = null;
     let capturedClose: boolean | null = null;
-    let capturedEventCount = 0;
 
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      // Outer reject timer — cleared in every exit path to avoid leaks.
+      const rejectTimer = setTimeout(() => {
         reject(new Error("timed out waiting for stream to close"));
       }, 25_000);
+
+      // Safety abort after 20 s — also cleared in every exit path.
+      const abortTimer = setTimeout(() => controller.abort(), 20_000);
+
+      const clearTimers = () => {
+        clearTimeout(rejectTimer);
+        clearTimeout(abortTimer);
+      };
 
       const controller = dispatchAndStream({
         baseUrl: LANGGRAPH_BASE_URL,
@@ -58,38 +77,37 @@ describe.skipIf(!reachable)("dispatchAndStream (integration)", () => {
           openclaw_flow_id: "integration-no-flow",
           openclaw_session_key: "integration-session",
         },
+        ...(LANGGRAPH_API_KEY && { apiKey: LANGGRAPH_API_KEY }),
+        ...(LANGGRAPH_AUTH_SCHEME && { authScheme: LANGGRAPH_AUTH_SCHEME }),
         handlers: {
           onRunId: (runId) => {
             capturedRunId = runId;
           },
           onEvent: (_body) => {
-            capturedEventCount++;
+            // Event count not asserted — zero events is valid for fast/empty workflows.
+            void _body;
           },
           onError: (err) => {
-            clearTimeout(timer);
+            clearTimers();
             reject(new Error(`onError: ${err.message}`));
           },
           onClose: (sawTerminal) => {
-            clearTimeout(timer);
+            clearTimers();
             capturedClose = sawTerminal;
             resolve();
           },
         },
       });
-
-      // Safety abort after 20 s
-      setTimeout(() => controller.abort(), 20_000);
     });
 
-    // The run ID must have been set before onClose fired
-    expect(typeof capturedRunId).toBe("string");
-    expect((capturedRunId as unknown as string).length).toBeGreaterThan(0);
+    // The run ID must have been set before onClose fired.
+    expect(capturedRunId).not.toBeNull();
+    expect(capturedRunId!.length).toBeGreaterThan(0);
 
     // onClose was called (capturedClose is boolean, not null)
     expect(capturedClose).not.toBeNull();
     expect(typeof capturedClose).toBe("boolean");
 
-    // We tolerate any number of events, including zero (fast/empty workflows)
-    expect(capturedEventCount).toBeGreaterThanOrEqual(0);
+    // capturedEventCount: no assertion — zero events is valid for fast/empty workflows.
   }, 30_000); // vitest per-test timeout
 });
