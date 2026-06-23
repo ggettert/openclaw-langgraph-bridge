@@ -2,7 +2,7 @@
  * Minimal LangGraph Server HTTP client.
  *
  * The dev server we target exposes (verified against LangGraph API server v0.10.0;
- * example base URL: `langgraph.example.com:2024`):
+ * example base URL: `http://langgraph.example.com:2024`):
  *   GET  /ok                          → liveness
  *   GET  /info                        → server metadata
  *   GET  /assistants/{id}/schemas     → input/output/state/config schemas
@@ -64,7 +64,7 @@ export type LanggraphCreateRunResult = {
 /**
  * A single assistant record returned by POST /assistants/search.
  *
- * Verified shape (LangGraph API server v0.10.0; example base URL: `langgraph.example.com:2024`):
+ * Verified shape (LangGraph API server v0.10.0; example base URL: `http://langgraph.example.com:2024`):
  *
  *   {
  *     "assistant_id": "<uuid>",
@@ -92,7 +92,7 @@ export type LanggraphAssistant = {
  *
  * All four fields are optional — LangGraph omits them when the workflow
  * does not declare them explicitly. Typical shape (verified against LangGraph API server
- * v0.10.0; example base URL: `langgraph.example.com:2024`):
+ * v0.10.0; example base URL: `http://langgraph.example.com:2024`):
  *
  *   {
  *     "input_schema":  { "title": "...", "type": "object", "properties": { ... } },

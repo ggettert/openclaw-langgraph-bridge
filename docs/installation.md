@@ -102,13 +102,13 @@ echo "Installed version: $INSTALLED_VERSION"
 
 ### Path B: git source (pinned tag)
 
-For development bots or when you need a specific commit not yet released:
+For development bots or when you need a specific commit not yet released. Replace `vX.Y.Z` below with the latest release tag — see [Releases](https://github.com/ggettert/openclaw-langgraph-bridge/releases):
 
 ```bash
 EXT_DIR=~/.openclaw/extensions/openclaw-langgraph-bridge
 mkdir -p "$EXT_DIR"
 cd "$EXT_DIR"
-git clone --depth=1 --branch v1.0.0 https://github.com/ggettert/openclaw-langgraph-bridge.git .
+git clone --depth=1 --branch vX.Y.Z https://github.com/ggettert/openclaw-langgraph-bridge.git .
 npm ci
 npm run build
 npm test  # full suite passes
