@@ -2,6 +2,7 @@ node_modules
 dist
 coverage
 *.md
+LICENSE
 package-lock.json
 .venv
 **/.venv
