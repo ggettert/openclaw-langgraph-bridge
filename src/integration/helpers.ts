@@ -59,33 +59,53 @@ export async function isLangGraphReachable(timeoutMs = 1000): Promise<boolean> {
     return false;
   }
 
+  // Build auth headers once; applied to both probes for consistency — some
+  // secured deployments gate /info as well as /assistants/search.
+  const authHeaders: Record<string, string> = {};
+  if (LANGGRAPH_API_KEY) {
+    authHeaders["x-api-key"] = LANGGRAPH_API_KEY;
+    if (LANGGRAPH_AUTH_SCHEME) {
+      authHeaders["x-auth-scheme"] = LANGGRAPH_AUTH_SCHEME;
+    }
+  }
+
   // --- 1. Probe /info -------------------------------------------------
-  try {
+  {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${LANGGRAPH_BASE_URL}/info`, {
-      signal: controller.signal,
-    });
-    clearTimeout(t);
-    if (!res.ok) return false;
-  } catch {
-    return false;
+    try {
+      const res = await fetch(`${LANGGRAPH_BASE_URL}/info`, {
+        signal: controller.signal,
+        headers: authHeaders,
+      });
+      if (!res.ok) return false;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   // --- 2. Confirm the assistant is registered --------------------------
   // NOTE: GET /assistants/<id> requires a UUID literal. To probe by graph_id
   // (e.g. "integration-stub"), POST /assistants/search with a graph_id filter.
   // This matches how the bridge's client resolves assistants under the hood.
-  try {
+  {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/search`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ graph_id: LANGGRAPH_WORKFLOW, limit: 1 }),
-      signal: controller.signal,
-    });
-    clearTimeout(t);
+    let res: Response;
+    try {
+      res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/search`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders },
+        body: JSON.stringify({ graph_id: LANGGRAPH_WORKFLOW, limit: 1 }),
+        signal: controller.signal,
+      });
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
     if (!res.ok) {
       return false;
     }
@@ -99,8 +119,6 @@ export async function isLangGraphReachable(timeoutMs = 1000): Promise<boolean> {
       );
       return false;
     }
-  } catch {
-    return false;
   }
 
   return true;

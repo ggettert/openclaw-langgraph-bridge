@@ -52,9 +52,15 @@ describe.skipIf(!reachable)("dispatchAndStream (integration)", () => {
     let capturedRunId: string | null = null;
     let capturedClose: boolean | null = null;
 
+    // Hoisted so the reject-timer callback can abort the stream.
+    let controller!: ReturnType<typeof dispatchAndStream>;
+
     await new Promise<void>((resolve, reject) => {
-      // Outer reject timer — cleared in every exit path to avoid leaks.
+      // Outer reject timer — clears both timers and aborts the SSE stream
+      // before rejecting so the fetch can't outlive the test.
       const rejectTimer = setTimeout(() => {
+        clearTimers();
+        controller.abort();
         reject(new Error("timed out waiting for stream to close"));
       }, 25_000);
 
@@ -66,7 +72,7 @@ describe.skipIf(!reachable)("dispatchAndStream (integration)", () => {
         clearTimeout(abortTimer);
       };
 
-      const controller = dispatchAndStream({
+      controller = dispatchAndStream({
         baseUrl: LANGGRAPH_BASE_URL,
         threadId,
         flowId: "integration-no-flow",
