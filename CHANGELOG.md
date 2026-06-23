@@ -6,11 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (currently pre-1.0; minor versions may include breaking changes).
 
-Each entry references the originating PR. To find the exact commits, see the PR's `Files changed` tab or `git log --grep #<pr-number>`.
+Each entry references the originating PR. To find the exact commits, see the PR's `Files changed` tab or `git log --grep="#<pr-number>"`.
 
 ## [Unreleased]
 
 ### Added
+- `SECURITY.md` reintroduced as a 5-line pointer to GitHub Security Advisories. Friendlier discoverability than expecting users to find the Security section in README. (Issue #61, PR #63)
 - CONTRIBUTING.md, CODE_OF_CONDUCT.md (PR #47)
 - CHANGELOG.md (this file)
 - `docs/workflow-contract.md` — canonical workflow integration guide for OSS users (PR #47)
