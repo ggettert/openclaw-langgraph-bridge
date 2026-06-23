@@ -9,6 +9,9 @@ import type { IncomingEventBody } from "./webhook-handler.js";
 import { formatInspect } from "./inspect-formatter.js";
 import { parseMaybeJson } from "./utils.js";
 
+/** Default per-request timeout for the LangGraph HTTP client (ms). */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 /**
  * openclaw-langgraph-bridge — Phase 2
  *
@@ -252,7 +255,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     api.registerTool(
       (_toolContext) => {
         const baseUrl = config.langgraphBaseUrl;
-        const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+        const timeoutMs = config.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
         const allowed = config.allowedWorkflows;
         const langgraphApiKey = config.langgraphApiKey;
         const langgraphAuthScheme = config.langgraphAuthScheme;
@@ -334,7 +337,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
     api.registerTool(
       (_toolContext) => {
         const baseUrl = config.langgraphBaseUrl;
-        const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+        const timeoutMs = config.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
         const allowedWorkflows = config.allowedWorkflows;
         const langgraphApiKey = config.langgraphApiKey;
         const langgraphAuthScheme = config.langgraphAuthScheme;
@@ -399,7 +402,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
       (toolContext) => {
         const sessionKey = toolContext.sessionKey;
         const baseUrl = config.langgraphBaseUrl;
-        const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+        const timeoutMs = config.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
         const allowed = config.allowedWorkflows;
         const callbackPublic = config.callbackPublicBaseUrl;
         const langgraphApiKey = config.langgraphApiKey;
@@ -803,7 +806,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 // Fix: route resume through dispatchAndStream with `command`
                 // instead of `input`. Identical subscriber lifecycle to
                 // initial dispatch — same processEvent, same wakeAgent.
-                const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+                const timeoutMs = config.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
                 const langgraphApiKey = config.langgraphApiKey;
                 const langgraphAuthScheme = config.langgraphAuthScheme;
                 const flowRevisionForSubscriber = Number(candidate.revision ?? 0);
@@ -1024,7 +1027,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         // Resume the langgraph run with the human's reply as the resume payload.
         const client = new LanggraphClient({
           baseUrl,
-          timeoutMs: config.defaultTimeoutMs ?? 10_000,
+          timeoutMs: config.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
         });
         await client.resumeRun(threadId, workflow, text, {
           metadata: {
@@ -1088,6 +1091,19 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Module-level constants (hoisted to avoid per-call allocations)
+// ---------------------------------------------------------------------------
+
+/** Recognized HITL approve keywords for normalizeResumePayload. */
+const RESUME_APPROVE = new Set(["approve", "approved", "yes", "ok", "lgtm"]);
+/** Recognized HITL block-and-revise keywords for normalizeResumePayload. */
+const RESUME_BLOCK_REVISE = new Set(["block", "block_revise", "revise", "no"]);
+/** Recognized HITL block-and-abort keywords for normalizeResumePayload. */
+const RESUME_BLOCK_ABORT = new Set(["block_abort", "abort", "stop", "end", "cancel"]);
+/** Recognized HITL extend keywords for normalizeResumePayload. */
+const RESUME_EXTEND = new Set(["extend", "extend_cap", "continue"]);
+
 /**
  * Normalize a resume payload so common HITL replies route cleanly through
  * gate parsers that expect a structured response. Accepts:
@@ -1118,16 +1134,11 @@ export function normalizeResumePayload(payload: unknown): unknown {
   }
   const lower = decisionRaw.toLowerCase();
 
-  const APPROVE = new Set(["approve", "approved", "yes", "ok", "lgtm"]);
-  const BLOCK_REVISE = new Set(["block", "block_revise", "revise", "no"]);
-  const BLOCK_ABORT = new Set(["block_abort", "abort", "stop", "end", "cancel"]);
-  const EXTEND = new Set(["extend", "extend_cap", "continue"]);
-
   let decision: string | null = null;
-  if (APPROVE.has(lower)) decision = "approve";
-  else if (BLOCK_REVISE.has(lower)) decision = "block_revise";
-  else if (BLOCK_ABORT.has(lower)) decision = "block_abort";
-  else if (EXTEND.has(lower)) decision = "extend";
+  if (RESUME_APPROVE.has(lower)) decision = "approve";
+  else if (RESUME_BLOCK_REVISE.has(lower)) decision = "block_revise";
+  else if (RESUME_BLOCK_ABORT.has(lower)) decision = "block_abort";
+  else if (RESUME_EXTEND.has(lower)) decision = "extend";
 
   // Not a recognized HITL keyword -> pass raw string through
   if (decision === null) return payload;
