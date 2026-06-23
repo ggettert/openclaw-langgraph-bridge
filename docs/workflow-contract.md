@@ -48,6 +48,16 @@ The `langgraph_dispatch` tool accepts a `decision_only` parameter (default `true
 POST {langgraphBaseUrl}/threads/{thread_id}/runs/stream
 ```
 
+### Outbound request headers
+
+| Header | Value | When present |
+|---|---|---|
+| `Content-Type` | `application/json` | Always |
+| `Accept` | `text/event-stream` | Always (stream endpoint only) |
+| `X-Api-Key` | `<langgraphApiKey>` | When `langgraphApiKey` is set in plugin config (required for LangSmith Platform) |
+
+The `X-Api-Key` header is sent on **all** outbound HTTP calls to the LangGraph server (thread creation, run dispatch, SSE stream, schema introspection, and assistant list). It is omitted entirely when `langgraphApiKey` is not configured, which is the correct behavior for `langgraph dev` and Aegra self-hosted deployments.
+
 The plugin uses `stream_mode=["updates", "custom"]`. It handles:
 
 - `event: metadata` — first frame; captures `run_id`. Not surfaced to the agent.
