@@ -281,6 +281,18 @@ describe("LanggraphClient", () => {
       expect(capturedHeaders).not.toHaveProperty("x-auth-scheme");
       expect(capturedHeaders).not.toHaveProperty("x-api-key");
     });
+
+    it("omits x-auth-scheme when authScheme is set but apiKey is not set", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg", authScheme: "langsmith-api-key" });
+      await client.createThread();
+      expect(capturedHeaders).not.toHaveProperty("x-auth-scheme");
+      expect(capturedHeaders).not.toHaveProperty("x-api-key");
+    });
   });
 
   describe("searchAssistants", () => {

@@ -798,4 +798,22 @@ describe("dispatchAndStream — x-auth-scheme header", () => {
     expect(capture.headers?.["content-type"]).toBe("application/json");
     expect(capture.headers?.["accept"]).toBe("text/event-stream");
   });
+
+  it("omits x-auth-scheme when authScheme is set but apiKey is not set", async () => {
+    const { fetchImpl, capture } = makeHeaderCapturingFetch();
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t1",
+      flowId: "f1",
+      assistantId: "fleet",
+      input: null,
+      authScheme: "langsmith-api-key",
+      // no apiKey — x-auth-scheme must be suppressed
+      handlers: { onEvent: () => {} },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await vi.waitFor(() => expect(capture.headers).toBeDefined());
+    expect(capture.headers).not.toHaveProperty("x-auth-scheme");
+    expect(capture.headers).not.toHaveProperty("x-api-key");
+  });
 });

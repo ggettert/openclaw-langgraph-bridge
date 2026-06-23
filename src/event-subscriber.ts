@@ -432,7 +432,7 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
         accept: "text/event-stream",
       };
       if (trimmedApiKey) streamHeaders["x-api-key"] = trimmedApiKey;
-      if (trimmedAuthScheme) streamHeaders["x-auth-scheme"] = trimmedAuthScheme;
+      if (trimmedApiKey && trimmedAuthScheme) streamHeaders["x-auth-scheme"] = trimmedAuthScheme;
       const res = await f(url, {
         method: "POST",
         headers: streamHeaders,

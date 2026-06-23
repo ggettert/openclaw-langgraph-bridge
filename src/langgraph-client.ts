@@ -267,7 +267,7 @@ export class LanggraphClient {
       const reqHeaders: Record<string, string> = {};
       if (init.body !== undefined) reqHeaders["content-type"] = "application/json";
       if (this.apiKey) reqHeaders["x-api-key"] = this.apiKey;
-      if (this.authScheme) reqHeaders["x-auth-scheme"] = this.authScheme;
+      if (this.apiKey && this.authScheme) reqHeaders["x-auth-scheme"] = this.authScheme;
       const res = await fetch(this.baseUrl + path, {
         method: init.method,
         headers: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
