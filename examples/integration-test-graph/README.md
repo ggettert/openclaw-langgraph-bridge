@@ -27,8 +27,11 @@ langgraph dev --no-browser
 Then, in another terminal:
 
 ```bash
-# Verify the assistant registered correctly
-curl http://localhost:2024/assistants/integration-stub
+# Verify the assistant registered correctly.
+# GET /assistants/<id> requires a UUID literal; use POST /assistants/search to look up by graph_id.
+curl -sf -X POST http://localhost:2024/assistants/search \
+  -H 'content-type: application/json' \
+  -d '{"graph_id":"integration-stub","limit":1}'
 
 # Run the integration tests against it
 LANGGRAPH_BASE_URL=http://localhost:2024 npm run test:integration
