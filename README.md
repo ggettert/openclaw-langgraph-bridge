@@ -100,9 +100,9 @@ Keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.opencl
 | `langgraphBaseUrl` | ✓ | — | Base URL of your LangGraph server (e.g. `http://langgraph.example.com:2024`) |
 | `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs |
 | `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server will POST events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
-| `agentId` | — | `"main"` | Agent id to wake on events |
-| `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When set: `langgraph_dispatch` and `langgraph_inspect_workflow` block non-listed ids with an error; `langgraph_list_workflows` still returns all workflows but marks blocked ones `allowed: false`. Empty or unset permits all workflows. |
-| `defaultTimeoutMs` | — | `10000` | Per-request timeout for the LangGraph HTTP client |
+| `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When set: `langgraph_dispatch` and `langgraph_inspect_workflow` block non-listed ids; `langgraph_list_workflows` marks blocked ones `allowed: false`. Empty or unset permits all workflows. |
+
+Full config reference: [docs/installation.md → Config reference](./docs/installation.md#config-reference)
 
 ---
 
@@ -116,19 +116,11 @@ Keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.opencl
 
 ### `callbackToken` flow
 
-The plugin registers a POST route at `/plugins/openclaw-langgraph-bridge/events`. Every inbound request must include `Authorization: Bearer <callbackToken>`. Requests that omit or mismatch the token are rejected with HTTP 401 before any payload is parsed.
-
-The token is validated by the plugin host only. It is **not** forwarded to LangGraph, not included in SSE subscription requests, and not visible to workflow authors. Workflow authors embed it in their deployment config (e.g. as a LangGraph environment variable) to POST events back.
-
-### `langgraphApiKey`
-
-When set, the plugin includes it as `x-api-key` on all outbound LangGraph HTTP requests — required for [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph). It is not required for `langgraph dev` or self-hosted Aegra deployments, and is simply omitted from headers when not configured.
-
-The key is stored in plugin config (`~/.openclaw/openclaw.json`). The plugin does not log or include the API key in flow metadata, wake messages, or debug output. It may still appear in HTTP error response bodies (`LanggraphHttpError.body`) if a misbehaving upstream echoes the header — callers should not log error bodies verbatim.
+The plugin registers `POST /plugins/openclaw-langgraph-bridge/events`, authenticated via `Authorization: Bearer <callbackToken>`. See [docs/workflow-contract.md → Webhook callback contract](./docs/workflow-contract.md#webhook-callback-contract) for full request/response details, error codes, and body limits.
 
 ### Reporting vulnerabilities
 
-Please use [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) for all security disclosures. **Do not file security issues in the public tracker.** See CONTRIBUTING.md for the full disclosure policy.
+Please use [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) for all security disclosures. **Do not file security issues in the public tracker.** See [SECURITY.md](./SECURITY.md) for the full disclosure policy.
 
 ---
 

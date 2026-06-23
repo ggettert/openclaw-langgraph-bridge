@@ -160,7 +160,7 @@ export function classifyStreamFrame(
   // Three recognized shapes (in priority order):
   //   1. Explicit Mode B: {kind: "status|milestone|decision|terminal|hitl",
   //      title?, summary?, interrupt_id?} — pass through.
-  //   2. Native fleet vocabulary: {phase: "<name>", event: "started|finished|failed", ...}
+  //   2. Native phase event vocabulary: {phase: "<name>", event: "started|finished|failed", ...}
   //      — translate to Mode B using event-name heuristic.
   //   3. Other custom payload — degrade to status.
   if (frame.event === "custom") {
@@ -185,10 +185,10 @@ export function classifyStreamFrame(
 
       // Shape 2a: typed PhaseEventPayload — fast path when isPhaseEventPayload
       // validates true (schema_version present or required fields all valid).
-      // Trust the typed fields; translateFleetVocabulary still maps kind/title,
+      // Trust the typed fields; translatePhaseEventVocabulary still maps kind/title,
       // but we KNOW summary is present so it's used verbatim with no heuristic.
       if (isPhaseEventPayload(data)) {
-        const translated = translateFleetVocabulary(data.phase, data.event, data);
+        const translated = translatePhaseEventVocabulary(data.phase, data.event, data);
         return {
           kind: "emit",
           body: {
@@ -200,12 +200,12 @@ export function classifyStreamFrame(
         };
       }
 
-      // Shape 2b: legacy fleet vocabulary {phase, event, ...} without required
+      // Shape 2b: legacy phase event vocabulary {phase, event, ...} without required
       // fields (e.g. no summary, no ticket_id). Falls back to heuristic summary.
       const phase = data.phase as string | undefined;
-      const fleetEvent = data.event as string | undefined;
-      if (phase && fleetEvent) {
-        const translated = translateFleetVocabulary(phase, fleetEvent, data);
+      const phaseEventName = data.event as string | undefined;
+      if (phase && phaseEventName) {
+        const translated = translatePhaseEventVocabulary(phase, phaseEventName, data);
         return {
           kind: "emit",
           body: {
@@ -250,9 +250,9 @@ import { truncateSummary, truncateJsonSummary } from "./text-utils.js";
 const VALID_KINDS = new Set<string>(["status", "milestone", "decision", "terminal", "hitl"]);
 
 /**
- * Translate native fleet `{phase, event, ...}` custom events into Mode B
- * shape. Used when a workflow author uses the project's own _emit()
- * helper rather than writing the explicit Mode B `kind` field.
+ * Translate native phase event `{phase, event, ...}` custom events into Mode B
+ * shape. Used when a workflow author uses the project's own emit helper
+ * rather than writing the explicit Mode B `kind` field.
  *
  * Event-name heuristic:
  *   - started / start              → milestone, title="<phase>:started"
@@ -261,22 +261,22 @@ const VALID_KINDS = new Set<string>(["status", "milestone", "decision", "termina
  *   - progress / update            → status
  *   - anything else                → status
  */
-function translateFleetVocabulary(
+function translatePhaseEventVocabulary(
   phase: string,
-  fleetEvent: string,
+  phaseEventName: string,
   data: Record<string, unknown>,
 ): {
   kind: LanggraphEventKind;
   title: string;
   summary: string;
 } {
-  const eventNorm = fleetEvent.toLowerCase();
+  const eventNorm = phaseEventName.toLowerCase();
 
-  // Explicit summary preferred over summarizeFleetData heuristic.
+  // Explicit summary preferred over summarizePhaseEventData heuristic.
   // Truncation is owned by processEvent (see summaryMaxChars).
   const explicitSummary =
     typeof data.summary === "string" && data.summary.length > 0 ? data.summary : null;
-  const summary = explicitSummary ?? summarizeFleetData(data);
+  const summary = explicitSummary ?? summarizePhaseEventData(data);
 
   if (eventNorm === "started" || eventNorm === "start") {
     return { kind: "milestone", title: `${phase}:started`, summary };
@@ -290,17 +290,17 @@ function translateFleetVocabulary(
     return { kind: "milestone", title: `${phase}:finished`, summary };
   }
   if (eventNorm === "failed" || eventNorm === "error") {
-    return { kind: "terminal", title: `${phase}:${fleetEvent}`, summary };
+    return { kind: "terminal", title: `${phase}:${phaseEventName}`, summary };
   }
-  return { kind: "status", title: `${phase}:${fleetEvent}`, summary };
+  return { kind: "status", title: `${phase}:${phaseEventName}`, summary };
 }
 
 /**
- * Build a one-line summary from native fleet event payload. Prefers the
+ * Build a one-line summary from native phase event payload. Prefers the
  * fields most likely to be useful in a Slack message (pr_url, ticket_id,
  * verdict, etc.) over raw JSON.
  */
-function summarizeFleetData(data: Record<string, unknown>): string {
+function summarizePhaseEventData(data: Record<string, unknown>): string {
   const parts: string[] = [];
   const tid = data.ticket_id;
   if (typeof tid === "string") parts.push(tid);
