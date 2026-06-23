@@ -8,7 +8,7 @@
      "should work" is not. -->
 
 - [ ] `npm ci && npm run build` passes locally
-- [ ] `npm test` passes locally (83 tests green)
+- [ ] `npm test` passes locally
 - [ ] Manually verified:
 
 ## Risks / Rollback
