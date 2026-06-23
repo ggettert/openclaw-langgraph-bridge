@@ -49,7 +49,7 @@ jobs:
       - name: Package release tarball
         # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md,
         # DESIGN.md → docs/design.md, the AUDIT-* file moved out of the
-        # tarball entirely (internal Carpe artifact per OSS-readiness review).
+        # tarball entirely (internal audit artifact excluded per OSS-readiness review).
         run: |
           tar -czf openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz \
             dist/ \

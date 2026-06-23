@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/openclaw-langgraph-bridge.svg)](https://www.npmjs.com/package/openclaw-langgraph-bridge)
 [![CI](https://github.com/ggettert/openclaw-langgraph-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/ggettert/openclaw-langgraph-bridge/actions/workflows/ci.yml)
 ![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen.svg)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 An [OpenClaw](https://openclaw.dev) plugin that lets any agent drive [LangGraph](https://github.com/langchain-ai/langgraph) workflows from inside a conversation thread — with per-thread isolation, live event streaming, HITL gate support, and proactive wake-back when workflows emit milestones or reach a terminal state.
 
@@ -73,7 +73,7 @@ flowchart LR
 
 ## Status
 
-Pre-1.0 release. Stable wire protocol, 146 tests, used in production at Carpe Data and ggettert's personal OpenClaw fleet. Pre-1.0 versions may include breaking changes between minor versions; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.
+Pre-1.0 release. Stable wire protocol, 146 tests, used in production across personal OpenClaw fleets. Pre-1.0 versions may include breaking changes between minor versions; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.
 
 Channel support: tested against Slack (DM + channel threads). Other OpenClaw channels are theoretically supported — the wire protocol and wake primitive are channel-agnostic — but only Slack has been validated end-to-end. See [docs/installation.md → Supported channels](./docs/installation.md#supported-channels) for the compatibility matrix.
 
@@ -146,4 +146,4 @@ Requires Node 22+. Tests cover SSE frame classification, payload normalization, 
 
 ## License
 
-Apache 2.0. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).

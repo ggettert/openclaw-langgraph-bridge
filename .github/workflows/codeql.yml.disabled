@@ -8,8 +8,7 @@
 #
 # That's noisy + misleading + clutters the Actions tab with red runs.
 #
-# When this plugin moves to a host that has GHAS (e.g. the carpe org if
-# it's enabled there, or any future public/open-source release), restore
+# When this plugin moves to a host that has GHAS (e.g. any future public/open-source release with a GHAS-enabled org), restore
 # the workflow by renaming this file from `codeql.yml.disabled` to
 # `codeql.yml`. The previous config (Node + JavaScript/TypeScript default
 # queries, weekly schedule, PR + main triggers) is preserved below.
