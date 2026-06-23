@@ -839,6 +839,7 @@ describe("dispatchAndStream — onClose after non-abort stream error", () => {
 
     const errors: Error[] = [];
     const closes: boolean[] = [];
+    let capturedRunId: string | null = null;
 
     dispatchAndStream({
       baseUrl: "http://lg.test",
@@ -848,19 +849,27 @@ describe("dispatchAndStream — onClose after non-abort stream error", () => {
       input: null,
       handlers: {
         onEvent: () => {},
+        onRunId: (id) => {
+          capturedRunId = id;
+        },
         onError: (e) => errors.push(e),
         onClose: (sawTerminal) => closes.push(sawTerminal),
       },
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
-    // Emit metadata frame so resolved=true inside dispatchAndStream.
+    // onRunId fires when the metadata frame arrives. The subsequent stream error
+    // then exercises the "error after run_id received" path: onError fires AND
+    // onClose still fires (the synthetic-terminal fallback in the caller depends
+    // on this invariant).
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
     streamController.enqueue(new TextEncoder().encode(metadataFrame));
 
     // Throw mid-stream (simulates connection reset after metadata received).
     streamController.error(new Error("connection reset"));
 
+    // Metadata was delivered before the error.
+    await vi.waitFor(() => expect(capturedRunId).toBe("run-err-1"));
     // Both onError and onClose must have been called.
     await vi.waitFor(() => expect(errors).toHaveLength(1));
     await vi.waitFor(() => expect(closes).toHaveLength(1));
