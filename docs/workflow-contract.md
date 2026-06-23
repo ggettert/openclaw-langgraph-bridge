@@ -54,9 +54,10 @@ POST {langgraphBaseUrl}/threads/{thread_id}/runs/stream
 |---|---|---|
 | `Content-Type` | `application/json` | Always |
 | `Accept` | `text/event-stream` | Always (stream endpoint only) |
-| `X-Api-Key` | `<langgraphApiKey>` | When `langgraphApiKey` is set in plugin config (required for LangSmith Platform) |
+| `x-api-key` | `<langgraphApiKey>` | When `langgraphApiKey` is set in plugin config (required for LangSmith Deployment or Fleet) |
+| `x-auth-scheme` | `<langgraphAuthScheme>` | When `langgraphAuthScheme` is set (e.g. `langsmith-api-key` for LangSmith Fleet deployments) |
 
-The `X-Api-Key` header is sent on **all** outbound HTTP calls to the LangGraph server (thread creation, run dispatch, SSE stream, schema introspection, and assistant list). It is omitted entirely when `langgraphApiKey` is not configured, which is the correct behavior for `langgraph dev` and Aegra self-hosted deployments.
+The `x-api-key` header is sent on **all** outbound HTTP calls to the LangGraph server (thread creation, run dispatch, SSE stream, schema introspection, and assistant list). It is omitted entirely when `langgraphApiKey` is not configured, which is the correct behavior for `langgraph dev` and Aegra self-hosted deployments. The `x-auth-scheme` header is only sent when `langgraphAuthScheme` is configured.
 
 The plugin uses `stream_mode=["updates", "custom"]`. It handles:
 
