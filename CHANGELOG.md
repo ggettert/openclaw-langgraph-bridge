@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Relicensed from Apache 2.0 to MIT to match the OpenClaw ecosystem (core OpenClaw, ClawHub, and related repos are MIT). Sole copyright holder consented to relicense.
+- Removed organizational references in docs/comments; copyright holder is now `Grace Gettert`.
+
 ### Added
 - CONTRIBUTING.md, CODE_OF_CONDUCT.md (PR #47)
 - CHANGELOG.md (this file)
@@ -89,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.2] - 2026-06-17
 
 ### Fixed
-- Skill: cherry-picked `spec_path` branch requirement and post-resume replay guard from the Carpe fork.
+- Skill: cherry-picked `spec_path` branch requirement and post-resume replay guard from a downstream fork.
 - Release tarball now bundles runtime deps via `npm ci --omit=dev` (#14 — tarball was missing `node_modules`, causing silent plugin load failure on install).
 - Terminated-flow guard: `processEvent` now ignores all event kinds for flows that have reached `graph:end` (#10, #16 — prevents SSE + webhook double-terminal from causing LangGraph retry storms or flipping flow status back to `waiting`).
 
