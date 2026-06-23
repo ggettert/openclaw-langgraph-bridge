@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: clawhub-publish-${{ github.ref }}
+  group: clawhub-publish-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -98,9 +98,10 @@ jobs:
           SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
           clawhub package publish . \
             --tags "${CLAWHUB_TAGS}" \
             --source-repo "${GITHUB_REPOSITORY}" \
-            --source-commit "${GITHUB_SHA}" \
+            --source-commit "${ACTUAL_SHA}" \
             --source-ref "${SOURCE_REF}" \
             --source-path "."
