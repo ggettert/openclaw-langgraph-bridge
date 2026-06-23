@@ -93,6 +93,8 @@ export const ConfigSchema = Type.Object({
     Type.String({
       description:
         'Auth scheme sent as x-auth-scheme alongside x-api-key. Required for LangSmith Fleet deployments (value: "langsmith-api-key"). Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.',
+      minLength: 1,
+      pattern: "^[A-Za-z0-9._\\-+/=]+$",
     }),
   ),
 });
