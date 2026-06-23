@@ -13,7 +13,13 @@ export function parseMaybeJson(
   if (typeof raw === "string") {
     try {
       const parsed: unknown = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      // Guard against arrays (typeof [] === "object") and other non-plain-object
+      // values; the return-type contract is Record<string, unknown> | null and
+      // arrays do not satisfy that shape.
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return null;
+      }
+      return parsed as Record<string, unknown>;
     } catch {
       return null;
     }

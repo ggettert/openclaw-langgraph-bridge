@@ -638,28 +638,29 @@ describe("langgraph_resume — error paths", () => {
   it("returns error when resume fetch fails", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(() => Promise.reject(new Error("stream error"))) as never;
+    try {
+      const flowRecord = makeFakeFlowRecord({
+        flowId: "flow-resume-1",
+        status: "waiting",
+        revision: 3,
+        stateJson: {
+          langgraph_thread_id: "th-1",
+          workflow: "fleet",
+          langgraph_base_url: "http://lg.test:2024",
+          decision_only: true,
+        },
+      });
+      const { api, tools } = makeMockApi({ flowRecord });
+      entry.register(api as never);
 
-    const flowRecord = makeFakeFlowRecord({
-      flowId: "flow-resume-1",
-      status: "waiting",
-      revision: 3,
-      stateJson: {
-        langgraph_thread_id: "th-1",
-        workflow: "fleet",
-        langgraph_base_url: "http://lg.test:2024",
-        decision_only: true,
-      },
-    });
-    const { api, tools } = makeMockApi({ flowRecord });
-    entry.register(api as never);
-
-    const result = (await tools["langgraph_resume"]!.execute("tc", {
-      payload: "approve",
-    })) as { details?: { status?: string; reason?: string } };
-    expect(result.details?.status).toBe("error");
-    expect(result.details?.reason).toBe("resume_failed");
-
-    globalThis.fetch = originalFetch;
+      const result = (await tools["langgraph_resume"]!.execute("tc", {
+        payload: "approve",
+      })) as { details?: { status?: string; reason?: string } };
+      expect(result.details?.status).toBe("error");
+      expect(result.details?.reason).toBe("resume_failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

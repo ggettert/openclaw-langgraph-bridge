@@ -30,4 +30,9 @@ describe("parseMaybeJson", () => {
   it("returns null when JSON parses to null literal", () => {
     expect(parseMaybeJson("null")).toBeNull();
   });
+
+  it("returns null when JSON parses to an array (arrays are not plain objects)", () => {
+    expect(parseMaybeJson("[1,2,3]")).toBeNull();
+    expect(parseMaybeJson("[]")).toBeNull();
+  });
 });
