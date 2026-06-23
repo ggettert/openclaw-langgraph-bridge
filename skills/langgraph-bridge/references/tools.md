@@ -30,7 +30,7 @@ result = langgraph_dispatch(
     workflow="my-workflow",
     input={
         "field_a": "<value>",
-        "field_b": "<value>"
+        "field_b": "<value>",
         # exact fields from input_schema.required
     }
 )
@@ -55,7 +55,7 @@ langgraph_dispatch(
     workflow="my-workflow",
     input={
         "unexpected_key": "value",    # ← dropped silently
-        "another_wrong_key": "value"  # ← dropped silently
+        "another_wrong_key": "value",  # ← dropped silently
         # required fields missing entirely
     }
 )
@@ -182,7 +182,7 @@ Read the current state of a flow this session owns. Returns status, step, and fl
 ```python
 state = langgraph_inspect()
 # state.inspect contains:
-#   flow_id, status (queued/running/waiting/completed/failed),
+#   flow_id, status (queued/running/waiting/succeeded/failed/cancelled/lost),
 #   currentStep, workflow, langgraph_thread_id, langgraph_run_id, ...
 ```
 
@@ -280,4 +280,4 @@ These live under `plugins.entries.openclaw-langgraph-bridge.config`. Set once at
 | `allowedWorkflows` | (empty = no restriction) | Allowlist of assistant ids / graph ids the agent may dispatch |
 | `defaultTimeoutMs` | `10000` | Per-request timeout for the LangGraph HTTP client |
 
-For full configuration docs, see the [README](../../README.md) and [docs/](../../docs/).
+For full configuration docs, see the [README](../../../README.md) and [docs/](../../../docs/).

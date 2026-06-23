@@ -36,7 +36,7 @@ Phase event contract: `schema_version: 1` (see [docs/phase-event-contract.md](..
 ## Lifecycle
 
 1. **(optional)** Call `langgraph_inspect_workflow` for any workflow whose input shape you don't already know — read `input_schema.required` before building the input object.
-2. **Dispatch** — call `langgraph_dispatch` → plugin creates managed TaskFlow, opens SSE stream, returns `{flow_id, thread_id, run_id}`.
+2. **Dispatch** — call `langgraph_dispatch` → plugin creates managed TaskFlow, opens SSE stream, returns `{flow_id, langgraph_thread_id, langgraph_run_id}`.
 3. **Yield** — call `sessions_yield` → turn ends; plugin streams events in background. Do NOT poll.
 4. **Wake** — plugin wakes agent on milestone/HITL/terminal events. Inspect flow state, post one short status message per event.
 5. **HITL gate** — if event kind is `hitl`, surface the prompt to the human, wait for reply, then call `langgraph_resume` with the human's answer. Yield again.

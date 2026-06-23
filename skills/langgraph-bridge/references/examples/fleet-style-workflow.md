@@ -201,4 +201,4 @@ The bridge plugin translates fleet's native `{phase, event, …}` custom-stream 
 - `reviewer` (started, finished)
 - `merge` (started, finished, blocked)
 
-**Workflow authors:** see [`docs/phase-event-contract.md`](../../docs/phase-event-contract.md) for the full payload schema, worked examples, and the `emit_phase_event` Python helper.
+**Workflow authors:** see [`docs/phase-event-contract.md`](../../../../docs/phase-event-contract.md) for the full payload schema, worked examples, and the `emit_phase_event` Python helper.
