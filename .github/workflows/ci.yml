@@ -59,7 +59,10 @@ jobs:
         run: npm run build
 
       - name: Install LangGraph CLI
-        run: pip install --quiet langgraph-cli
+        # `langgraph dev` requires the in-memory runtime extra. Plain
+        # `langgraph-cli` installs only the CLI shell and fails at startup
+        # with: "Required package 'langgraph-api' is not installed".
+        run: pip install --quiet "langgraph-cli[inmem]"
 
       - name: Start langgraph dev
         # Start the example stub graph so that integration tests can reach
@@ -68,11 +71,27 @@ jobs:
         # skip.  continue-on-error is intentionally absent.
         run: |
           cd examples/integration-test-graph && langgraph dev --no-browser &
-          echo "Waiting for LangGraph server to become ready…"
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:2024/info && break
+          LG_PID=$!
+          echo "Waiting for LangGraph server to become ready (PID $LG_PID)…"
+          ready=""
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:2024/info >/dev/null; then
+              ready="y"
+              break
+            fi
+            # If the background process already died, bail immediately
+            if ! kill -0 "$LG_PID" 2>/dev/null; then
+              echo "ERROR: langgraph dev exited before becoming ready." >&2
+              wait "$LG_PID" 2>/dev/null || true
+              exit 1
+            fi
             sleep 1
           done
+          if [ -z "$ready" ]; then
+            echo "ERROR: LangGraph server not ready after 60s. Killing PID $LG_PID." >&2
+            kill "$LG_PID" 2>/dev/null || true
+            exit 1
+          fi
           echo "LangGraph server ready."
 
       - name: Run integration tests
