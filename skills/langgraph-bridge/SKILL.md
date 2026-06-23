@@ -385,6 +385,16 @@ langgraph_resume(
 
 **Resume guard** — if the flow is not in `status: "waiting"`, the tool returns an error rather than blindly posting to LangGraph. Check `langgraph_inspect` first if unsure.
 
+**Error reasons**
+
+| `reason` | meaning | action |
+|---|---|---|
+| `flow_not_waiting` | Flow exists but is not in `waiting` status | Call `langgraph_inspect` to check current status; do not re-resume |
+| `resume_already_in_progress` | Another `langgraph_resume` call is already in flight for this flow | Wait — you'll be woken when the resumed run emits its next event. Or call `langgraph_inspect` to check current status |
+| `flow_state_missing_handles` | Flow state is missing `langgraph_thread_id`, `workflow`, or `base_url` | Inspect the flow; it may need to be re-dispatched |
+| `no_flow_found` | No matching flow found in this session | Check if the workflow was dispatched in this session; it may have expired |
+| `resume_failed` | Network error, LangGraph server error, or timeout | Retry; if persistent, check LangGraph server health |
+
 ---
 
 ## Discovering and using unknown workflows

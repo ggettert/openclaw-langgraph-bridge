@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Concurrent `langgraph_resume` calls on the same flow_id no longer open duplicate SSE streams (#9). The second concurrent call now returns `resume_already_in_progress` instead of racing through the TOCTOU window.
+
 ### Changed
 - Relicensed from Apache 2.0 to MIT to match the OpenClaw ecosystem (core OpenClaw, ClawHub, and related repos are MIT). Sole copyright holder consented to relicense.
 - Removed organizational references in docs/comments; copyright holder is now `Grace Gettert`.
