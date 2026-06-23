@@ -166,8 +166,8 @@ describe("LanggraphClient", () => {
     });
   });
 
-  describe("X-Api-Key header (apiKey option)", () => {
-    it("sends X-Api-Key header on all requests when apiKey is configured", async () => {
+  describe("x-api-key header (apiKey option)", () => {
+    it("sends x-api-key header on all requests when apiKey is configured", async () => {
       const capturedHeaders: Record<string, string>[] = [];
       mockFetch(async (_input, init) => {
         capturedHeaders.push({ ...(init?.headers as Record<string, string>) });
@@ -178,10 +178,10 @@ describe("LanggraphClient", () => {
         apiKey: "secret-api-key",
       });
       await client.createThread();
-      expect(capturedHeaders[0]!["X-Api-Key"]).toBe("secret-api-key");
+      expect(capturedHeaders[0]!["x-api-key"]).toBe("secret-api-key");
     });
 
-    it("omits X-Api-Key header when apiKey is not configured", async () => {
+    it("omits x-api-key header when apiKey is not configured", async () => {
       let capturedHeaders: Record<string, string> | undefined;
       mockFetch(async (_input, init) => {
         capturedHeaders = init?.headers as Record<string, string> | undefined;
@@ -189,10 +189,11 @@ describe("LanggraphClient", () => {
       });
       const client = new LanggraphClient({ baseUrl: "http://lg" });
       await client.createThread();
-      expect(capturedHeaders).not.toHaveProperty("X-Api-Key");
+      expect(capturedHeaders).toBeDefined();
+      expect(capturedHeaders).not.toHaveProperty("x-api-key");
     });
 
-    it("sends X-Api-Key on GET requests (no body)", async () => {
+    it("sends x-api-key on GET requests (no body)", async () => {
       let capturedHeaders: Record<string, string> | undefined;
       mockFetch(async (_input, init) => {
         capturedHeaders = init?.headers as Record<string, string> | undefined;
@@ -203,12 +204,12 @@ describe("LanggraphClient", () => {
         apiKey: "my-key",
       });
       await client.getAssistantSchemas("fleet");
-      expect(capturedHeaders?.["X-Api-Key"]).toBe("my-key");
+      expect(capturedHeaders?.["x-api-key"]).toBe("my-key");
       // content-type should NOT be sent on GET (no body)
       expect(capturedHeaders).not.toHaveProperty("content-type");
     });
 
-    it("sends both content-type and X-Api-Key on POST requests when apiKey is configured", async () => {
+    it("sends both content-type and x-api-key on POST requests when apiKey is configured", async () => {
       let capturedHeaders: Record<string, string> | undefined;
       mockFetch(async (_input, init) => {
         capturedHeaders = init?.headers as Record<string, string> | undefined;
@@ -220,7 +221,65 @@ describe("LanggraphClient", () => {
       });
       await client.searchAssistants();
       expect(capturedHeaders?.["content-type"]).toBe("application/json");
-      expect(capturedHeaders?.["X-Api-Key"]).toBe("my-key");
+      expect(capturedHeaders?.["x-api-key"]).toBe("my-key");
+    });
+
+    it("trims whitespace from apiKey and treats whitespace-only as unset", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      // whitespace-only apiKey must NOT produce a header
+      const client = new LanggraphClient({ baseUrl: "http://lg", apiKey: "   " });
+      await client.createThread();
+      expect(capturedHeaders).not.toHaveProperty("x-api-key");
+    });
+  });
+
+  describe("x-auth-scheme header (authScheme option)", () => {
+    it("sends x-auth-scheme alongside x-api-key when authScheme is configured", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      const client = new LanggraphClient({
+        baseUrl: "http://lg",
+        apiKey: "fleet-key",
+        authScheme: "langsmith-api-key",
+      });
+      await client.createThread();
+      expect(capturedHeaders?.["x-api-key"]).toBe("fleet-key");
+      expect(capturedHeaders?.["x-auth-scheme"]).toBe("langsmith-api-key");
+    });
+
+    it("omits x-auth-scheme when authScheme is not configured", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      const client = new LanggraphClient({
+        baseUrl: "http://lg",
+        apiKey: "some-key",
+        // no authScheme
+      });
+      await client.createThread();
+      expect(capturedHeaders).toBeDefined();
+      expect(capturedHeaders).not.toHaveProperty("x-auth-scheme");
+    });
+
+    it("omits x-auth-scheme when neither apiKey nor authScheme are configured", async () => {
+      let capturedHeaders: Record<string, string> | undefined;
+      mockFetch(async (_input, init) => {
+        capturedHeaders = init?.headers as Record<string, string> | undefined;
+        return new Response(JSON.stringify({ thread_id: "t-x" }), { status: 200 });
+      });
+      const client = new LanggraphClient({ baseUrl: "http://lg" });
+      await client.createThread();
+      expect(capturedHeaders).not.toHaveProperty("x-auth-scheme");
+      expect(capturedHeaders).not.toHaveProperty("x-api-key");
     });
   });
 

@@ -38,7 +38,11 @@
       },
       "langgraphApiKey": {
         "type": "string",
-        "description": "API key for LangSmith Platform (LangChain's hosted LangGraph offering). Sent as X-Api-Key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments."
+        "description": "API key for LangSmith Deployment (LangChain's hosted LangGraph). Sent as x-api-key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments."
+      },
+      "langgraphAuthScheme": {
+        "type": "string",
+        "description": "Auth scheme sent as x-auth-scheme alongside x-api-key. Required for LangSmith Fleet deployments (value: 'langsmith-api-key'). Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev."
       }
     }
   },
