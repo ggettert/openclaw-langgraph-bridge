@@ -48,6 +48,19 @@ The `langgraph_dispatch` tool accepts a `decision_only` parameter (default `true
 POST {langgraphBaseUrl}/threads/{thread_id}/runs/stream
 ```
 
+### Outbound request headers
+
+| Header | Value | When present |
+|---|---|---|
+| `Content-Type` | `application/json` | Always |
+| `Accept` | `text/event-stream` | Always (stream endpoint only) |
+| `x-api-key` | `<langgraphApiKey>` | When `langgraphApiKey` is set in plugin config (required for LangSmith Deployment or Fleet) |
+| `x-auth-scheme` | `<langgraphAuthScheme>` | When BOTH `langgraphApiKey` AND `langgraphAuthScheme` are set (required for LangSmith Fleet deployments) |
+
+The `x-api-key` header is sent on **all** outbound HTTP calls to the LangGraph server (thread creation, run dispatch, SSE stream, schema introspection, and assistant list). It is omitted entirely when `langgraphApiKey` is not configured, which is the correct behavior for `langgraph dev` and Aegra self-hosted deployments. The `x-auth-scheme` header is only sent when **both** `langgraphApiKey` and `langgraphAuthScheme` are configured — it must always travel alongside `x-api-key` and is meaningless without it.
+
+> **⚠️ Verification status:** the `x-api-key` / `x-auth-scheme` paths are covered by unit tests against mocked HTTP only. As of v1.0, no end-to-end verification against a live LangSmith Deployment or Fleet endpoint has been performed.
+
 The plugin uses `stream_mode=["updates", "custom"]`. It handles:
 
 - `event: metadata` — first frame; captures `run_id`. Not surfaced to the agent.
