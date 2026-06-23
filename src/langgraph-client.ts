@@ -20,6 +20,12 @@ export type LanggraphClientOptions = {
   baseUrl: string;
   /** Per-request timeout in ms. Defaults to 10s. */
   timeoutMs?: number;
+  /**
+   * API key for LangSmith Platform. When set, sent as `X-Api-Key` on every
+   * outbound request. Not required for `langgraph dev` or self-hosted Aegra
+   * deployments. Do NOT log this value.
+   */
+  apiKey?: string;
 };
 
 export type LanggraphCreateRunOptions = {
@@ -115,10 +121,12 @@ export class LanggraphHttpError extends Error {
 export class LanggraphClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  private readonly apiKey: string | undefined;
 
   constructor(opts: LanggraphClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.timeoutMs = opts.timeoutMs ?? 10_000;
+    this.apiKey = opts.apiKey;
   }
 
   async ok(): Promise<boolean> {
@@ -248,9 +256,12 @@ export class LanggraphClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      const reqHeaders: Record<string, string> = {};
+      if (init.body !== undefined) reqHeaders["content-type"] = "application/json";
+      if (this.apiKey) reqHeaders["X-Api-Key"] = this.apiKey;
       const res = await fetch(this.baseUrl + path, {
         method: init.method,
-        headers: init.body !== undefined ? { "content-type": "application/json" } : undefined,
+        headers: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
         body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
         signal: controller.signal,
       });

@@ -381,6 +381,11 @@ export type StreamingDispatchParams = {
   input?: Record<string, unknown> | null;
   command?: { resume?: unknown; [k: string]: unknown } | null;
   metadata?: Record<string, unknown>;
+  /**
+   * API key for LangSmith Platform. When set, sent as `X-Api-Key` on the
+   * streaming request. Do NOT log this value.
+   */
+  apiKey?: string;
   handlers: StreamHandlers;
   fetchImpl?: typeof fetch;
 };
@@ -393,8 +398,18 @@ export type StreamingDispatchParams = {
  * background.
  */
 export function dispatchAndStream(params: StreamingDispatchParams): AbortController {
-  const { baseUrl, threadId, flowId, assistantId, input, command, metadata, handlers, fetchImpl } =
-    params;
+  const {
+    baseUrl,
+    threadId,
+    flowId,
+    assistantId,
+    input,
+    command,
+    metadata,
+    apiKey,
+    handlers,
+    fetchImpl,
+  } = params;
 
   const controller = new AbortController();
   const url = baseUrl.replace(/\/+$/, "") + `/threads/${encodeURIComponent(threadId)}/runs/stream`;
@@ -403,12 +418,14 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
     let sawTerminal = false;
     const f = fetchImpl ?? fetch;
     try {
+      const streamHeaders: Record<string, string> = {
+        "content-type": "application/json",
+        accept: "text/event-stream",
+      };
+      if (apiKey) streamHeaders["X-Api-Key"] = apiKey;
       const res = await f(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-        },
+        headers: streamHeaders,
         // Resume runs send `command` (e.g. {resume: ...}); initial runs
         // send `input`. Sending both is undefined behaviour per the
         // RunCreateStateful schema, so only the relevant key is included.
