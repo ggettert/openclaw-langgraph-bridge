@@ -3,7 +3,7 @@
  * payload that LangGraph workflow nodes emit via `get_stream_writer()` to
  * signal phase transitions.
  *
- * The plugin's `translateFleetVocabulary` function in event-subscriber.ts
+ * The plugin's `translatePhaseEventVocabulary` function in event-subscriber.ts
  * consumes this shape and maps it to Mode B `{kind, title, summary, ...}`
  * events that wake the agent.
  *
@@ -11,7 +11,7 @@
  *
  * Backward compatibility: schema_version is optional. Payloads conforming to
  * the v1 contract require `summary`; legacy payloads without `summary` fall
- * through to translateFleetVocabulary's summarizeFleetData heuristics.
+ * through to translatePhaseEventVocabulary's summarizePhaseEventData heuristics.
  */
 
 /** Valid values for the `event` field in a PhaseEventPayload. */
@@ -25,7 +25,7 @@ export type PhaseVerdict = "approve" | "must_fix" | "should_fix" | "abort";
 
 /**
  * Canonical shape of a custom-stream event emitted by a workflow node that
- * uses the fleet phase-event vocabulary.
+ * uses the phase-event vocabulary.
  *
  * Required fields: `phase`, `event`, `ticket_id`, `summary`
  * Optional fields: `schema_version`, `pr_url`, `branch`, `verdict`, `error`, `details`

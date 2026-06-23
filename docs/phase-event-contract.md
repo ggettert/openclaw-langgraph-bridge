@@ -1,8 +1,10 @@
 # Phase Event Contract — `schema_version: 1`
 
 Custom-stream events emitted by workflow nodes to signal phase transitions.
-The plugin's `translateFleetVocabulary` function classifies these into Mode B
+The plugin's `translatePhaseEventVocabulary` function classifies these into Mode B
 wake events that the agent receives in the originating session.
+
+> Python LangGraph syntax is shown throughout this document. [JS/TS LangGraph workflows](https://langchain-ai.github.io/langgraphjs/) emit the same payload shape via the `streamWriter` API — only the SDK call differs.
 
 **Related:** `src/phase-event.ts` (TypeScript types + validator),
 `skills/langgraph-bridge/SKILL.md` (agent-facing skill that reacts to these events).
@@ -140,14 +142,28 @@ Agent receives: milestone wake, expected post: `🎉 merge finished — merged h
 
 ---
 
-## Python helper — `emit_phase_event`
+## Recommended pattern — `emit_phase_event` wrapper
 
-The canonical way to emit a phase event from a workflow node is via the
-`emit_phase_event` helper in `graph/_shared.py` (devops-langgraph repo, issue #13):
+Wrap `get_stream_writer()` in a small helper to enforce shape consistency across
+your workflow nodes:
 
 ```python
-from graph._shared import emit_phase_event
+# Recommended: wrap get_stream_writer() in a helper to enforce shape consistency.
+def emit_phase_event(phase, event, ticket_id, summary, **extra):
+    from langgraph.config import get_stream_writer
+    get_stream_writer()({
+        "schema_version": 1,
+        "phase": phase,
+        "event": event,
+        "ticket_id": ticket_id,
+        "summary": summary,
+        **extra,
+    })
+```
 
+Usage in a workflow node:
+
+```python
 # In a node function:
 emit_phase_event(
     "coder",
@@ -155,11 +171,8 @@ emit_phase_event(
     ticket_id=state["ticket_id"],
     summary="analyzing spec",
     branch=state.get("branch"),
-    schema_version=1,
 )
 ```
-
-This wraps `get_stream_writer()` and ensures the payload shape is always correct.
 
 ---
 

@@ -212,7 +212,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.kind).toBe("status");
   });
 
-  it("native fleet vocabulary {phase, event=started, ...} -> milestone", () => {
+  it("native phase event vocabulary {phase, event=started, ...} -> milestone", () => {
     const body = emit(
       classifyStreamFrame(
         {
@@ -235,7 +235,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.data).toMatchObject({ phase: "designer", event: "started" });
   });
 
-  it("native fleet {phase, event=finished, pr_url} -> milestone w/ pr summary", () => {
+  it("native phase event {phase, event=finished, pr_url} -> milestone w/ pr summary", () => {
     const body = emit(
       classifyStreamFrame(
         {
@@ -258,7 +258,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.summary).toContain("pull/42");
   });
 
-  it("native fleet {phase, event=failed, ...} -> terminal", () => {
+  it("native phase event {phase, event=failed, ...} -> terminal", () => {
     const body = emit(
       classifyStreamFrame(
         {
@@ -273,7 +273,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.title).toBe("coder:failed");
   });
 
-  it("native fleet {phase, event=progress, ...} -> status", () => {
+  it("native phase event {phase, event=progress, ...} -> status", () => {
     const body = emit(
       classifyStreamFrame(
         {
@@ -288,7 +288,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
     expect(body.title).toBe("reviewer:progress");
   });
 
-  it("explicit kind beats native fleet vocabulary", () => {
+  it("explicit kind beats native phase event vocabulary", () => {
     // If a workflow emits {kind: "decision", phase: "...", event: "..."},
     // the explicit kind wins over the phase/event translation.
     const body = emit(
@@ -325,7 +325,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
 
   it("explicit summary field preferred over heuristic when present", () => {
     // When the workflow author provides data.summary, that string is used
-    // instead of the summarizeFleetData heuristic.
+    // instead of the summarizePhaseEventData heuristic.
     const body = emit(
       classifyStreamFrame(
         {
@@ -348,7 +348,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
   });
 
   it("heuristic summary used when explicit summary field is absent", () => {
-    // Legacy payload without data.summary falls back to summarizeFleetData.
+    // Legacy payload without data.summary falls back to summarizePhaseEventData.
     const body = emit(
       classifyStreamFrame(
         {
@@ -469,7 +469,7 @@ describe("classifyStreamFrame — custom (workflow author escape hatch)", () => 
   // -------------------------------------------------------------------------
 
   it("passes summary through verbatim (truncation owned by processEvent)", () => {
-    // Explicit summary passes through translateFleetVocabulary verbatim.
+    // Explicit summary passes through translatePhaseEventVocabulary verbatim.
     // processEvent (webhook-handler.ts) applies the summaryMaxChars cap later.
     const longSummary = "x".repeat(600); // 600 chars, longer than legacy 500 ref
     const body = emit(
