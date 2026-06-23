@@ -13,7 +13,13 @@
 
 import { describe, it, expect } from "vitest";
 import { LanggraphClient } from "../langgraph-client.js";
-import { isLangGraphReachable, LANGGRAPH_BASE_URL, LANGGRAPH_WORKFLOW } from "./helpers.js";
+import {
+  isLangGraphReachable,
+  LANGGRAPH_BASE_URL,
+  LANGGRAPH_WORKFLOW,
+  LANGGRAPH_API_KEY,
+  LANGGRAPH_AUTH_SCHEME,
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Top-level availability check (ESM top-level await, supported by vitest)
@@ -25,7 +31,12 @@ const reachable = await isLangGraphReachable();
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!reachable)("LangGraph client (integration)", () => {
-  const client = new LanggraphClient({ baseUrl: LANGGRAPH_BASE_URL, timeoutMs: 10_000 });
+  const client = new LanggraphClient({
+    baseUrl: LANGGRAPH_BASE_URL,
+    timeoutMs: 10_000,
+    ...(LANGGRAPH_API_KEY && { apiKey: LANGGRAPH_API_KEY }),
+    ...(LANGGRAPH_AUTH_SCHEME && { authScheme: LANGGRAPH_AUTH_SCHEME }),
+  });
 
   it("GET /ok returns true", async () => {
     const ok = await client.ok();
