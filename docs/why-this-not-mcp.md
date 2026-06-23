@@ -44,4 +44,4 @@ Nothing prevents using both transports. A reasonable future design: `langgraph_d
 
 This would also enable *third-party MCP clients* (Claude Desktop, OpenAI Agents SDK, etc.) to share the same LangGraph deployment — they use `/mcp` for one-shot calls; the plugin handles the orchestrator path with full streaming. Both coexist.
 
-That is a post-v0.13.0 design exploration. For now, the plugin owns both surfaces because the wire call and the event stream are entangled enough that splitting them prematurely adds complexity without benefit.
+That is a post-v1.0 design exploration. For now, the plugin owns both surfaces because the wire call and the event stream are entangled enough that splitting them prematurely adds complexity without benefit.
