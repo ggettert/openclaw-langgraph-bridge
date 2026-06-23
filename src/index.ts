@@ -36,7 +36,7 @@ export const ConfigSchema = Type.Object({
   langgraphBaseUrl: Type.Optional(
     Type.String({
       description: "Base URL of the LangGraph server. Dispatch fails fast when unset.",
-      examples: ["http://langgraph.example.local:2024"],
+      examples: ["http://langgraph.example.com:2024"],
     }),
   ),
   callbackToken: Type.Optional(
