@@ -38,6 +38,38 @@ The plugin talks to a LangGraph server. For local testing against a real graph, 
 - `processEvent` and classifiers are pure functions — test them directly without spinning up the HTTP layer
 - Keep tests deterministic; avoid `setTimeout` in tests unless you control the clock via `vi.useFakeTimers()`
 
+### Integration Tests
+
+Tests in `src/**/*.integration.test.ts` exercise the plugin against a real LangGraph server.
+They are **skipped silently** when LangGraph is unreachable at
+`process.env.LANGGRAPH_BASE_URL` (default `http://localhost:2024`), so
+`npm test` (unit-only) always runs fast and clean.
+
+```bash
+npm run test:integration          # integration only (auto-skips if no LangGraph)
+npm run test:all                  # unit + integration
+```
+
+CI runs them in a dedicated job (`integration`) that starts `langgraph dev`
+automatically. The job is marked `continue-on-error: true` so integration
+failures are visible but do not block unit-only PRs from merging.
+
+To run integration tests locally, start a LangGraph server first:
+
+```bash
+langgraph dev        # or docker run … your own graph
+npm run test:integration
+```
+
+The integration tests live in `src/integration/`. When adding a new one, add
+the availability guard at the top of the file:
+
+```typescript
+import { isLangGraphReachable } from "./helpers.js";
+const reachable = await isLangGraphReachable();
+describe.skipIf(!reachable)("My suite (integration)", () => { ... });
+```
+
 ## Branch & Commit Conventions
 
 We use **[Conventional Commits](https://www.conventionalcommits.org/)**: `feat | fix | docs | chore | refactor | test`.
