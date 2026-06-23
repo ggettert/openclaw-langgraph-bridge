@@ -212,8 +212,7 @@ git push origin vX.Y.Z
 ## License / DCO
 
 No CLA required. By contributing you agree that your contributions are
-licensed under the project's [Apache 2.0 license](./LICENSE), per Apache 2.0
-section 5 ("Submission of Contributions"). The standard inbound=outbound
+licensed under the project's [MIT license](./LICENSE). The standard inbound=outbound
 licensing model applies.
 
 ## Code of Conduct

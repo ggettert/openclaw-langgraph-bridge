@@ -3,7 +3,7 @@
   "version": "0.12.4",
   "description": "OpenClaw plugin that lets any agent drive LangGraph workflows from inside a conversation thread with proactive event wake-back.",
   "type": "module",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "author": "Grace Gettert",
   "repository": {
     "type": "git",
@@ -38,8 +38,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "LICENSE",
-    "NOTICE"
+    "LICENSE"
   ],
   "peerDependencies": {
     "openclaw": ">=2026.5.17"
