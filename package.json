@@ -29,11 +29,10 @@
     "lint": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "test": "npm run lint && vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:all": "npm test && npm run test:integration",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest",
-    "smoke": "node --import tsx scripts/smoke-langgraph.ts",
-    "smoke:webhook": "node --import tsx scripts/smoke-webhook.ts",
-    "smoke:streaming": "node --import tsx scripts/smoke-streaming.ts"
+    "test:watch": "vitest"
   },
   "files": [
     "dist",
