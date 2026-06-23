@@ -164,6 +164,21 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         : undefined,
     };
 
+    // Concurrent-resume guard (#9): prevents TOCTOU race between status check
+    // and dispatchAndStream. Without this, two simultaneous langgraph_resume
+    // calls on the same flow_id can both pass the `status === "waiting"` guard
+    // and each open a duplicate SSE stream + LangGraph run.
+    //
+    // Lock-release point: we hold the lock through `flows.resume()` (option 2).
+    // Releasing after `await runIdPromise` would leave a narrow window where a
+    // second caller's status check fires between runIdPromise resolving and
+    // flows.resume() transitioning the flow to "running" — it would still see
+    // "waiting" and bypass the guard. Holding through flows.resume() closes
+    // that residual race at the cost of a single extra synchronous call inside
+    // the lock. The window is <1 ms in practice but the correctness guarantee
+    // is worth it.
+    const resumeInProgress = new Set<string>();
+
     // ---- 1a. Tool: langgraph_inspect ---------------------------------------
     // Read the current state of a flow this session owns. With no
     // flow_id argument, returns the most recent flow created by this
@@ -744,160 +759,174 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   current_status: candidate.status,
                 });
               }
-              const stateJson = parseMaybeJson(candidate.stateJson) ?? {};
-              const threadId = stateJson.langgraph_thread_id as string | undefined;
-              const workflow = stateJson.workflow as string | undefined;
-              const baseUrl =
-                (stateJson.langgraph_base_url as string | undefined) ?? config.langgraphBaseUrl;
-              if (!threadId || !workflow || !baseUrl) {
+              const flowId = candidate.flowId!;
+              if (resumeInProgress.has(flowId)) {
                 return jsonResult({
                   status: "error" as const,
-                  reason: "flow_state_missing_handles",
-                  message:
-                    "Flow state is missing langgraph_thread_id / workflow / base_url; cannot resume.",
-                  flow_id: candidate.flowId,
+                  reason: "resume_already_in_progress",
+                  message: `Flow ${flowId} already has a resume in flight. Wait for it to complete (you'll be woken when the resumed run emits its next event) or call langgraph_inspect to check current status.`,
+                  flow_id: flowId,
                 });
               }
-
-              // Normalize common HITL string responses into the structured
-              // {decision, feedback} shape most workflows' gate parsers
-              // accept. Plain strings still pass through unchanged for
-              // workflows whose interrupts expect a raw string.
-              const normalizedPayload = normalizeResumePayload(params.payload);
-
-              // Phase 5 (2026-06-16): resume via streaming endpoint, not
-              // fire-and-forget. Previously called client.resumeRun which
-              // POSTed /threads/{tid}/runs and returned the run_id. That
-              // worked, but no SSE subscriber was opened on the new run,
-              // so any milestone / hitl / terminal events emitted by the
-              // resumed graph never reached our processEvent pipeline and
-              // never woke the agent. Symptom: resume merged on
-              // LangGraph but the agent was never woken about the terminal.
-              //
-              // Fix: route resume through dispatchAndStream with `command`
-              // instead of `input`. Identical subscriber lifecycle to
-              // initial dispatch — same processEvent, same wakeAgent.
-              const timeoutMs = config.defaultTimeoutMs ?? 10_000;
-              const langgraphApiKey = config.langgraphApiKey;
-              const langgraphAuthScheme = config.langgraphAuthScheme;
-              const flowRevisionForSubscriber = Number(candidate.revision ?? 0);
-              const onEvent = (body: IncomingEventBody) => {
-                try {
-                  processEvent({
-                    body,
-                    sessionKey,
-                    flowRevision: flowRevisionForSubscriber,
-                    deps: handlerDeps,
+              resumeInProgress.add(flowId);
+              try {
+                const stateJson = parseMaybeJson(candidate.stateJson) ?? {};
+                const threadId = stateJson.langgraph_thread_id as string | undefined;
+                const workflow = stateJson.workflow as string | undefined;
+                const baseUrl =
+                  (stateJson.langgraph_base_url as string | undefined) ?? config.langgraphBaseUrl;
+                if (!threadId || !workflow || !baseUrl) {
+                  return jsonResult({
+                    status: "error" as const,
+                    reason: "flow_state_missing_handles",
+                    message:
+                      "Flow state is missing langgraph_thread_id / workflow / base_url; cannot resume.",
+                    flow_id: candidate.flowId,
                   });
-                } catch (err: unknown) {
-                  const m = err instanceof Error ? err.message : String(err);
-                  logger?.warn?.(
-                    `langgraph-bridge: resume subscriber processEvent failed flow=${candidate.flowId}: ${m}`,
-                  );
                 }
-              };
-              const runIdPromise = new Promise<string>((resolve, reject) => {
-                const timer = setTimeout(
-                  () => reject(new Error("timed out waiting for resume run_id metadata frame")),
-                  timeoutMs,
-                );
-                let resolved = false;
-                dispatchAndStream({
-                  baseUrl,
-                  threadId,
-                  flowId: candidate.flowId!,
-                  assistantId: workflow,
-                  command: { resume: normalizedPayload },
-                  apiKey: langgraphApiKey,
-                  authScheme: langgraphAuthScheme,
-                  metadata: {
-                    openclaw_flow_id: candidate.flowId,
-                    openclaw_session_key: sessionKey,
-                    openclaw_resume_source: "tool:langgraph_resume",
-                  },
-                  handlers: {
-                    onRunId: (runId) => {
-                      if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timer);
-                        resolve(runId);
-                      }
+
+                // Normalize common HITL string responses into the structured
+                // {decision, feedback} shape most workflows' gate parsers
+                // accept. Plain strings still pass through unchanged for
+                // workflows whose interrupts expect a raw string.
+                const normalizedPayload = normalizeResumePayload(params.payload);
+
+                // Phase 5 (2026-06-16): resume via streaming endpoint, not
+                // fire-and-forget. Previously called client.resumeRun which
+                // POSTed /threads/{tid}/runs and returned the run_id. That
+                // worked, but no SSE subscriber was opened on the new run,
+                // so any milestone / hitl / terminal events emitted by the
+                // resumed graph never reached our processEvent pipeline and
+                // never woke the agent. Symptom: resume merged on
+                // LangGraph but the agent was never woken about the terminal.
+                //
+                // Fix: route resume through dispatchAndStream with `command`
+                // instead of `input`. Identical subscriber lifecycle to
+                // initial dispatch — same processEvent, same wakeAgent.
+                const timeoutMs = config.defaultTimeoutMs ?? 10_000;
+                const langgraphApiKey = config.langgraphApiKey;
+                const langgraphAuthScheme = config.langgraphAuthScheme;
+                const flowRevisionForSubscriber = Number(candidate.revision ?? 0);
+                const onEvent = (body: IncomingEventBody) => {
+                  try {
+                    processEvent({
+                      body,
+                      sessionKey,
+                      flowRevision: flowRevisionForSubscriber,
+                      deps: handlerDeps,
+                    });
+                  } catch (err: unknown) {
+                    const m = err instanceof Error ? err.message : String(err);
+                    logger?.warn?.(
+                      `langgraph-bridge: resume subscriber processEvent failed flow=${candidate.flowId}: ${m}`,
+                    );
+                  }
+                };
+                const runIdPromise = new Promise<string>((resolve, reject) => {
+                  const timer = setTimeout(
+                    () => reject(new Error("timed out waiting for resume run_id metadata frame")),
+                    timeoutMs,
+                  );
+                  let resolved = false;
+                  dispatchAndStream({
+                    baseUrl,
+                    threadId,
+                    flowId: candidate.flowId!,
+                    assistantId: workflow,
+                    command: { resume: normalizedPayload },
+                    apiKey: langgraphApiKey,
+                    authScheme: langgraphAuthScheme,
+                    metadata: {
+                      openclaw_flow_id: candidate.flowId,
+                      openclaw_session_key: sessionKey,
+                      openclaw_resume_source: "tool:langgraph_resume",
                     },
-                    onEvent,
-                    onError: (err) => {
-                      logger?.warn?.(
-                        `langgraph-bridge: resume stream error flow=${candidate.flowId}: ${err.message}`,
-                      );
-                      if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timer);
-                        reject(err);
-                      }
-                    },
-                    onClose: (sawTerminal) => {
-                      logger?.info?.(
-                        `langgraph-bridge: resume stream closed flow=${candidate.flowId} sawTerminal=${sawTerminal}`,
-                      );
-                      // Same synthetic-terminal fallback as initial dispatch:
-                      // if the resumed run ended without a terminal-kind
-                      // event, fabricate one so the agent learns the run
-                      // finished. Real terminal and hitl events suppress
-                      // this branch.
-                      if (!sawTerminal) {
-                        try {
-                          processEvent({
-                            body: {
-                              kind: "terminal",
-                              flow_id: candidate.flowId!,
-                              title: "graph:end",
-                              summary: "workflow completed (no error)",
-                            },
-                            sessionKey,
-                            flowRevision: flowRevisionForSubscriber,
-                            deps: handlerDeps,
-                          });
-                        } catch {
-                          // Best-effort — if processEvent throws, fall
-                          // through; we already logged the close.
+                    handlers: {
+                      onRunId: (runId) => {
+                        if (!resolved) {
+                          resolved = true;
+                          clearTimeout(timer);
+                          resolve(runId);
                         }
-                      }
+                      },
+                      onEvent,
+                      onError: (err) => {
+                        logger?.warn?.(
+                          `langgraph-bridge: resume stream error flow=${candidate.flowId}: ${err.message}`,
+                        );
+                        if (!resolved) {
+                          resolved = true;
+                          clearTimeout(timer);
+                          reject(err);
+                        }
+                      },
+                      onClose: (sawTerminal) => {
+                        logger?.info?.(
+                          `langgraph-bridge: resume stream closed flow=${candidate.flowId} sawTerminal=${sawTerminal}`,
+                        );
+                        // Same synthetic-terminal fallback as initial dispatch:
+                        // if the resumed run ended without a terminal-kind
+                        // event, fabricate one so the agent learns the run
+                        // finished. Real terminal and hitl events suppress
+                        // this branch.
+                        if (!sawTerminal) {
+                          try {
+                            processEvent({
+                              body: {
+                                kind: "terminal",
+                                flow_id: candidate.flowId!,
+                                title: "graph:end",
+                                summary: "workflow completed (no error)",
+                              },
+                              sessionKey,
+                              flowRevision: flowRevisionForSubscriber,
+                              deps: handlerDeps,
+                            });
+                          } catch {
+                            // Best-effort — if processEvent throws, fall
+                            // through; we already logged the close.
+                          }
+                        }
+                      },
                     },
+                  });
+                });
+                const resumeRunId = await runIdPromise;
+
+                // Transition flow waiting -> running. Re-read current revision.
+                const liveFlow = flows.get(candidate.flowId!) as { revision?: number } | undefined;
+                const liveRevision = Number(liveFlow?.revision ?? candidate.revision ?? 0);
+                flows.resume({
+                  flowId: candidate.flowId!,
+                  expectedRevision: liveRevision,
+                  status: "running",
+                  currentStep: "resumed",
+                  stateJson: {
+                    ...stateJson,
+                    phase: "phase-5-resumed-stream",
+                    resume_payload_preview:
+                      typeof normalizedPayload === "string"
+                        ? normalizedPayload.slice(0, 200)
+                        : JSON.stringify(normalizedPayload).slice(0, 200),
+                    resumed_at: Date.now(),
+                    resume_run_id: resumeRunId,
                   },
                 });
-              });
-              const resumeRunId = await runIdPromise;
 
-              // Transition flow waiting -> running. Re-read current revision.
-              const liveFlow = flows.get(candidate.flowId!) as { revision?: number } | undefined;
-              const liveRevision = Number(liveFlow?.revision ?? candidate.revision ?? 0);
-              flows.resume({
-                flowId: candidate.flowId!,
-                expectedRevision: liveRevision,
-                status: "running",
-                currentStep: "resumed",
-                stateJson: {
-                  ...stateJson,
-                  phase: "phase-5-resumed-stream",
-                  resume_payload_preview:
-                    typeof normalizedPayload === "string"
-                      ? normalizedPayload.slice(0, 200)
-                      : JSON.stringify(normalizedPayload).slice(0, 200),
-                  resumed_at: Date.now(),
+                logger?.info?.(
+                  `langgraph_resume: resumed flow=${candidate.flowId} thread=${threadId} new_run=${resumeRunId} (streaming)`,
+                );
+
+                return jsonResult({
+                  status: "resumed" as const,
+                  flow_id: candidate.flowId,
+                  langgraph_thread_id: threadId,
                   resume_run_id: resumeRunId,
-                },
-              });
-
-              logger?.info?.(
-                `langgraph_resume: resumed flow=${candidate.flowId} thread=${threadId} new_run=${resumeRunId} (streaming)`,
-              );
-
-              return jsonResult({
-                status: "resumed" as const,
-                flow_id: candidate.flowId,
-                langgraph_thread_id: threadId,
-                resume_run_id: resumeRunId,
-                note: "Flow is back to running and SSE subscriber is attached. Subsequent events will surface in this session as they fire.",
-              });
+                  note: "Flow is back to running and SSE subscriber is attached. Subsequent events will surface in this session as they fire.",
+                });
+              } finally {
+                resumeInProgress.delete(flowId);
+              }
             } catch (err: unknown) {
               const m = err instanceof Error ? err.message : String(err);
               logger?.error?.(`langgraph_resume failed: ${m}`);

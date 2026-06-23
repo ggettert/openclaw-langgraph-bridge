@@ -975,3 +975,225 @@ describe("langgraphApiKey — sentinel no-leak test", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// langgraph_resume — concurrent-call deduplication (#9)
+// ---------------------------------------------------------------------------
+
+describe("langgraph_resume — concurrent-call deduplication (#9)", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /**
+   * Build a fetch mock that returns a valid SSE stream for /runs/stream calls
+   * and exposes the underlying vi.fn() for call-count assertions.
+   */
+  function makeCountingFetch(runId = "run-concurrent-1") {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes("/threads") && !url.includes("/runs")) {
+        return new Response(JSON.stringify({ thread_id: "th-concurrent" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/runs/stream")) {
+        const frame = `event: metadata\r\ndata: ${JSON.stringify({ run_id: runId, attempt: 1 })}\r\n\r\n`;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(frame));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    return fetchImpl as unknown as typeof fetch & { mock: { calls: unknown[][] } };
+  }
+
+  it("concurrent resumes on same flow_id: one succeeds, one returns resume_already_in_progress, exactly one stream opened", async () => {
+    const fetchImpl = makeCountingFetch("run-concurrent-1");
+    globalThis.fetch = fetchImpl;
+
+    const flowRecord = makeFakeFlowRecord({
+      flowId: "flow-concurrent",
+      status: "waiting",
+      revision: 1,
+      stateJson: {
+        langgraph_thread_id: "th-concurrent",
+        workflow: "fleet",
+        langgraph_base_url: "http://lg.test:2024",
+      },
+    });
+    const { api, tools } = makeMockApi({ flowRecord });
+    entry.register(api as never);
+
+    // Fire both calls without awaiting between them. p1 synchronously reaches
+    // resumeInProgress.add(flowId) before hitting the first await, so p2's
+    // resumeInProgress.has(flowId) check fires in the same microtask batch
+    // and finds the lock held.
+    const p1 = tools["langgraph_resume"]!.execute("tc1", {
+      payload: "approve",
+      flow_id: "flow-concurrent",
+    });
+    const p2 = tools["langgraph_resume"]!.execute("tc2", {
+      payload: "approve",
+      flow_id: "flow-concurrent",
+    });
+    const [r1, r2] = (await Promise.all([p1, p2])) as Array<{
+      details?: { status?: string; reason?: string; flow_id?: string };
+    }>;
+
+    const statuses = [r1.details?.status, r2.details?.status];
+    const reasons = [r1.details?.reason, r2.details?.reason];
+
+    // Exactly one call succeeds
+    expect(statuses).toContain("resumed");
+    // Exactly one call is blocked
+    expect(reasons).toContain("resume_already_in_progress");
+
+    // The blocked call must carry the flow_id
+    const blocked = [r1, r2].find((r) => r.details?.reason === "resume_already_in_progress")!;
+    expect(blocked.details?.flow_id).toBe("flow-concurrent");
+
+    // Exactly ONE stream was opened (no duplicate SSE subscriber)
+    const streamCalls = (fetchImpl as unknown as { mock: { calls: string[][] } }).mock.calls.filter(
+      ([url]) => typeof url === "string" && url.includes("/runs/stream"),
+    );
+    expect(streamCalls).toHaveLength(1);
+  });
+
+  it("sequential resumes on same flow_id: second call returns flow_not_waiting (lock released after first)", async () => {
+    globalThis.fetch = makeCountingFetch("run-sequential-1");
+
+    const waitingRecord = makeFakeFlowRecord({
+      flowId: "flow-seq",
+      status: "waiting",
+      revision: 1,
+      stateJson: {
+        langgraph_thread_id: "th-seq",
+        workflow: "fleet",
+        langgraph_base_url: "http://lg.test:2024",
+      },
+    });
+    const runningRecord = makeFakeFlowRecord({
+      flowId: "flow-seq",
+      status: "running",
+      revision: 2,
+      stateJson: {
+        langgraph_thread_id: "th-seq",
+        workflow: "fleet",
+        langgraph_base_url: "http://lg.test:2024",
+      },
+    });
+    const { api, tools, flowsBinding } = makeMockApi({ flowRecord: waitingRecord });
+    // First findLatest() returns waiting; second returns running (post-resume)
+    flowsBinding.findLatest.mockReturnValueOnce(waitingRecord).mockReturnValueOnce(runningRecord);
+    flowsBinding.get.mockReturnValue(waitingRecord);
+    entry.register(api as never);
+
+    // First resume — should succeed
+    const r1 = (await tools["langgraph_resume"]!.execute("tc1", { payload: "approve" })) as {
+      details?: { status?: string; reason?: string };
+    };
+    expect(r1.details?.status).toBe("resumed");
+
+    // Second resume — flow is now running; must return flow_not_waiting, not resume_already_in_progress
+    const r2 = (await tools["langgraph_resume"]!.execute("tc2", { payload: "approve" })) as {
+      details?: { status?: string; reason?: string };
+    };
+    expect(r2.details?.status).toBe("error");
+    expect(r2.details?.reason).toBe("flow_not_waiting");
+    // Lock is gone — reason is flow status, not concurrency guard
+    expect(r2.details?.reason).not.toBe("resume_already_in_progress");
+  });
+
+  it("concurrent resumes on DIFFERENT flow_ids both succeed", async () => {
+    globalThis.fetch = makeCountingFetch("run-multi-1");
+
+    const flowA = makeFakeFlowRecord({
+      flowId: "flow-A",
+      status: "waiting",
+      revision: 1,
+      stateJson: {
+        langgraph_thread_id: "th-A",
+        workflow: "fleet",
+        langgraph_base_url: "http://lg.test:2024",
+      },
+    });
+    const flowB = makeFakeFlowRecord({
+      flowId: "flow-B",
+      status: "waiting",
+      revision: 1,
+      stateJson: {
+        langgraph_thread_id: "th-B",
+        workflow: "fleet",
+        langgraph_base_url: "http://lg.test:2024",
+      },
+    });
+    const { api, tools, flowsBinding } = makeMockApi({ flowRecord: flowA });
+    // Dispatch to different flows by flow_id: get() returns the correct record per id
+    flowsBinding.get.mockImplementation((id: string) =>
+      id === "flow-A" ? flowA : id === "flow-B" ? flowB : undefined,
+    );
+    entry.register(api as never);
+
+    // Both calls start without awaiting between them
+    const p1 = tools["langgraph_resume"]!.execute("tc1", {
+      payload: "approve",
+      flow_id: "flow-A",
+    });
+    const p2 = tools["langgraph_resume"]!.execute("tc2", {
+      payload: "approve",
+      flow_id: "flow-B",
+    });
+    const [r1, r2] = (await Promise.all([p1, p2])) as Array<{
+      details?: { status?: string; reason?: string };
+    }>;
+
+    // Both must succeed — no cross-flow lock contention
+    expect(r1.details?.status).toBe("resumed");
+    expect(r2.details?.status).toBe("resumed");
+  });
+
+  it("lock released on inner error: second sequential call does not get resume_already_in_progress", async () => {
+    // First call: fetch rejects — dispatchAndStream throws → runIdPromise rejects
+    // → outer catch returns resume_failed → finally clears the lock.
+    globalThis.fetch = vi.fn(() => Promise.reject(new Error("network error"))) as never;
+
+    const flowRecord = makeFakeFlowRecord({
+      flowId: "flow-lock-release",
+      status: "waiting",
+      revision: 1,
+      stateJson: {
+        langgraph_thread_id: "th-lr",
+        workflow: "fleet",
+        langgraph_base_url: "http://lg.test:2024",
+      },
+    });
+    const { api, tools } = makeMockApi({ flowRecord });
+    entry.register(api as never);
+
+    // First call must fail
+    const r1 = (await tools["langgraph_resume"]!.execute("tc1", {
+      payload: "approve",
+      flow_id: "flow-lock-release",
+    })) as { details?: { status?: string; reason?: string } };
+    expect(r1.details?.status).toBe("error");
+    expect(r1.details?.reason).toBe("resume_failed");
+
+    // Second sequential call after the first fully resolved: must NOT see the concurrency guard.
+    // It will hit resume_failed again (same rejecting fetch) but NOT resume_already_in_progress.
+    const r2 = (await tools["langgraph_resume"]!.execute("tc2", {
+      payload: "approve",
+      flow_id: "flow-lock-release",
+    })) as { details?: { status?: string; reason?: string } };
+    expect(r2.details?.reason).not.toBe("resume_already_in_progress");
+    // Confirm it's actually trying again (resume_failed from the network, not the lock)
+    expect(r2.details?.reason).toBe("resume_failed");
+  });
+});
