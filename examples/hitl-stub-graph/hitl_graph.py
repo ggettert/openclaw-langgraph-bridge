@@ -32,7 +32,11 @@ def gate(state: State) -> State:
 
 
 def done(state: State) -> State:
-    return {"final": f"completed:{state.get('decision', 'unknown')}"}
+    decision = state.get("decision", "unknown")
+    feedback = state.get("feedback", "")
+    if feedback:
+        return {"final": f"completed:{decision}:{feedback}"}
+    return {"final": f"completed:{decision}"}
 
 
 builder = StateGraph(State)
