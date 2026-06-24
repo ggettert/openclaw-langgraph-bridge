@@ -61,6 +61,16 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Verify version sync (package.json vs openclaw.plugin.json)
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          MANIFEST_VERSION="$(node -p "require('./openclaw.plugin.json').version")"
+          if [[ "$PKG_VERSION" != "$MANIFEST_VERSION" ]]; then
+            echo "::error::Version drift: package.json=$PKG_VERSION openclaw.plugin.json=$MANIFEST_VERSION"
+            exit 1
+          fi
+          echo "Versions synced: $PKG_VERSION"
+
   integration:
     name: Integration Tests (LangGraph dev)
     runs-on: ubuntu-latest

@@ -10,7 +10,15 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+### Changed
+- Distribution model: now publishes to npm and ClawHub via dedicated workflows. GitHub release tarball pipeline removed — install paths are now `clawhub:`, `npm:`, `git:`, or build-from-source.
+- Package renamed to `@ggettert/openclaw-langgraph-bridge` (scoped).
+- `openclaw` peer dependency bumped to `^2026.6.9` to pull security fixes for hono / undici / protobufjs / esbuild / tar transitive vulnerabilities.
+
 ### Added
+- npm-publish.yml workflow with trusted publishing (OIDC, no token rotation).
+- clawhub-publish.yml workflow. Requires `CLAWHUB_TOKEN` repo secret.
+- CI version-sync check (`package.json` ↔ `openclaw.plugin.json`).
 - `SECURITY.md` reintroduced as a 5-line pointer to GitHub Security Advisories. Friendlier discoverability than expecting users to find the Security section in README. (Issue #61, PR #63)
 - CONTRIBUTING.md, CODE_OF_CONDUCT.md (PR #47)
 - CHANGELOG.md (this file)
@@ -33,6 +41,7 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 - `SECURITY.md` — security disclosure is via GitHub Security Advisories (see README Security section and CONTRIBUTING.md). (PR #47)
 
 ### Fixed
+- SSE stream non-abort errors mid-stream now invoke `onClose` so the dispatch/resume caller's synthetic-terminal fallback fires. Previously: a connection reset or LangGraph pod restart could leave the flow permanently in `"running"`.
 - Concurrent `langgraph_resume` calls on the same flow_id no longer open duplicate SSE streams (#9, PR #62). The second concurrent call now returns `resume_already_in_progress` instead of racing through the TOCTOU window.
 - Orphaned `queued` flow on dispatch failure now tombstoned so `langgraph_inspect` doesn't surface stale records. (#7, PR #47)
 - `typebox` package replaced with canonical `@sinclair/typebox`. (#15, PR #47)

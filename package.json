@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-langgraph-bridge",
+  "name": "@ggettert/openclaw-langgraph-bridge",
   "version": "0.12.4",
   "description": "OpenClaw plugin that lets any agent drive LangGraph workflows from inside a conversation thread with proactive event wake-back.",
   "type": "module",
@@ -23,7 +23,9 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "prettier --check . && eslint .",
@@ -38,10 +40,12 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "skills",
+    "docs"
   ],
   "peerDependencies": {
-    "openclaw": ">=2026.5.17"
+    "openclaw": "^2026.6.9"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
@@ -49,7 +53,7 @@
     "@typescript-eslint/parser": "^8.62.0",
     "@vitest/coverage-v8": "~3.2.6",
     "eslint": "^10.5.0",
-    "openclaw": "latest",
+    "openclaw": "^2026.6.9",
     "prettier": "^3.8.4",
     "tsx": "^4.22.4",
     "typescript": "^5.9.0",
