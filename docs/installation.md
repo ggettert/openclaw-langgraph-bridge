@@ -48,7 +48,7 @@ Verify each before starting.
 
    | Deployment target | API key needed? | Notes |
    |---|---|---|
-   | `langgraph dev` (local POC) | No | Zero-config local dev server |
+   | `langgraph dev` (local dev server) | No | Zero-config local dev server |
    | [Aegra](https://docs.aegra.dev) (self-hosted production) | No | Drop-in LangGraph server with Postgres + Redis |
    | [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph, cloud) | **Yes** | Set `langgraphApiKey` in plugin config (see below) |
    | LangSmith Fleet | **Yes** | Set both `langgraphApiKey` and `langgraphAuthScheme: "langsmith-api-key"` |
