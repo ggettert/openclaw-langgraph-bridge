@@ -1,8 +1,9 @@
 {
-  "dependencies": [".", "../hitl-stub-graph"],
+  "dependencies": [".", "../hitl-stub-graph", "../multi-node-stub-graph"],
   "graphs": {
     "integration-stub": "./stub_graph.py:graph",
-    "hitl-stub": "../hitl-stub-graph/hitl_graph.py:graph"
+    "hitl-stub": "../hitl-stub-graph/hitl_graph.py:graph",
+    "multi-node-stub": "../multi-node-stub-graph/multi_graph.py:graph"
   },
   "env": ".env"
 }
