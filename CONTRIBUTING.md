@@ -142,8 +142,9 @@ shape and that feedback survived through the graph state to the `done` node).
 The multi-node test (`src/integration/multi-node-updates.integration.test.ts`)
 targets a third graph at `examples/multi-node-stub-graph/`. It documents the
 observed bridge behavior when LangGraph fans out to parallel branches: as of
-LangGraph 0.2.x, parallel branches are reported in separate updates frames (not
-batched), so the bridge emits one milestone per branch.
+LangGraph 0.10.0 / langgraph-py 1.2.6, parallel branches are reported in
+separate updates frames (not batched), so the bridge emits one milestone per
+branch.
 
 The combined `langgraph.json` in `examples/integration-test-graph/` now registers
 **three** assistants — `integration-stub`, `hitl-stub`, and `multi-node-stub` — from

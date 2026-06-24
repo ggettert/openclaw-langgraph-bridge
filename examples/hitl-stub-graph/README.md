@@ -7,7 +7,12 @@ to exercise the HITL interrupt → resume → terminal lifecycle.
 
 Single node `gate` calls `interrupt({"prompt": "approve or block_revise?"})`.
 Resume payload (any string or `{decision, feedback}` dict) routes to the
-`done` node which sets `final = "completed:<decision>"`.
+`done` node which sets:
+
+- `final = "completed:<decision>"` — when no feedback is provided
+- `final = "completed:<decision>:<feedback>"` — when feedback is present
+
+Examples: `"completed:approve"`, `"completed:block_revise:cleanup the tests"`.
 
 ## Running locally
 

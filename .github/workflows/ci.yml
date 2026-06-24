@@ -99,8 +99,8 @@ jobs:
 
       - name: Start langgraph dev
         # Start the combined stub graph from examples/integration-test-graph,
-        # which registers both 'integration-stub' and 'hitl-stub' assistants
-        # in one server instance (see langgraph.json in that directory).
+        # which registers 'integration-stub', 'hitl-stub', and 'multi-node-stub'
+        # assistants in one server instance (see langgraph.json in that directory).
         # If this step fails (e.g. broken graph, missing deps), we want a
         # loud failure — not a silent skip.  continue-on-error is intentionally
         # absent.
