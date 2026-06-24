@@ -129,6 +129,30 @@ const reachable = await isLangGraphReachable();
 describe.skipIf(!reachable)("My suite (integration)", () => { ... });
 ```
 
+#### HITL integration tests
+
+The HITL integration tests (`src/integration/hitl.integration.test.ts`) target
+a second example graph at `examples/hitl-stub-graph/`. Two tests cover the full
+lifecycle: `approve` (happy-path terminal) and `block_revise` with feedback echo
+(validates that `normalizeResumePayload` produced the right `{decision, feedback}`
+shape and that feedback survived through the graph state to the `done` node).
+
+#### Multi-node updates frame integration test
+
+The multi-node test (`src/integration/multi-node-updates.integration.test.ts`)
+targets a third graph at `examples/multi-node-stub-graph/`. It documents the
+observed bridge behavior when LangGraph fans out to parallel branches: as of
+LangGraph 0.10.0 / langgraph-py 1.2.6, parallel branches are reported in
+separate updates frames (not batched), so the bridge emits one milestone per
+branch.
+
+The combined `langgraph.json` in `examples/integration-test-graph/` now registers
+**three** assistants — `integration-stub`, `hitl-stub`, and `multi-node-stub` — from
+a single `langgraph dev` invocation. Override workflow ids with:
+
+- `LANGGRAPH_HITL_WORKFLOW=<id>` — override the HITL graph
+- `LANGGRAPH_MULTI_NODE_WORKFLOW=<id>` — override the multi-node graph
+
 ## Branch & Commit Conventions
 
 We use **[Conventional Commits](https://www.conventionalcommits.org/)**: `feat | fix | docs | chore | refactor | test`.
