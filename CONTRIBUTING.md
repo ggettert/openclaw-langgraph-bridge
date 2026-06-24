@@ -129,6 +129,15 @@ const reachable = await isLangGraphReachable();
 describe.skipIf(!reachable)("My suite (integration)", () => { ... });
 ```
 
+#### HITL integration test
+
+The HITL integration test (`src/integration/hitl.integration.test.ts`) targets
+a second example graph at `examples/hitl-stub-graph/`. The combined
+`langgraph.json` in `examples/integration-test-graph/` registers both
+`integration-stub` and `hitl-stub` from a single `langgraph dev` invocation,
+so no second server is needed. Override the workflow id with
+`LANGGRAPH_HITL_WORKFLOW=<id>` if you want to target a different HITL graph.
+
 ## Branch & Commit Conventions
 
 We use **[Conventional Commits](https://www.conventionalcommits.org/)**: `feat | fix | docs | chore | refactor | test`.

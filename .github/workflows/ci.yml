@@ -98,10 +98,12 @@ jobs:
         run: pip install --quiet "langgraph-cli[inmem]"
 
       - name: Start langgraph dev
-        # Start the example stub graph so that integration tests can reach
-        # a real assistant ('integration-stub').  If this step fails (e.g.
-        # broken graph, missing deps), we want a loud failure — not a silent
-        # skip.  continue-on-error is intentionally absent.
+        # Start the combined stub graph from examples/integration-test-graph,
+        # which registers both 'integration-stub' and 'hitl-stub' assistants
+        # in one server instance (see langgraph.json in that directory).
+        # If this step fails (e.g. broken graph, missing deps), we want a
+        # loud failure — not a silent skip.  continue-on-error is intentionally
+        # absent.
         run: |
           cd examples/integration-test-graph && langgraph dev --no-browser &
           LG_PID=$!
@@ -132,6 +134,8 @@ jobs:
         env:
           LANGGRAPH_BASE_URL: "http://localhost:2024"
           # LANGGRAPH_WORKFLOW defaults to "integration-stub" (matches examples/integration-test-graph)
+          # LANGGRAPH_HITL_WORKFLOW defaults to "hitl-stub" (also registered via combined langgraph.json)
+          LANGGRAPH_HITL_WORKFLOW: "hitl-stub"
 
       # Guard: assert that at least one test actually ran and passed.
       # Without this guard vitest exits 0 when every describe block is

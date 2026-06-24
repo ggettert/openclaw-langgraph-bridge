@@ -1,6 +1,8 @@
 {
-  "dependencies": ["."],
+  "dependencies": [".", "../hitl-stub-graph"],
   "graphs": {
-    "integration-stub": "./stub_graph.py:graph"
-  }
+    "integration-stub": "./stub_graph.py:graph",
+    "hitl-stub": "../hitl-stub-graph/hitl_graph.py:graph"
+  },
+  "env": ".env"
 }
