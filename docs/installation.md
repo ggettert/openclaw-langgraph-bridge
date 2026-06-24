@@ -35,10 +35,10 @@ Per-bot install runbook. Takes a working OpenClaw gateway and adds the bridge pl
 
 Verify each before starting.
 
-1. **OpenClaw gateway** running and healthy (version `2026.5.17` or later):
+1. **OpenClaw gateway** running and healthy (version `2026.6.9` or later):
    ```bash
    openclaw --version
-   # v2026.5.17 or higher
+   # v2026.6.9 or higher
    ```
 2. **Node 22+** (needed for build-from-source path only; ClawHub and npm install paths handle this automatically):
    ```bash

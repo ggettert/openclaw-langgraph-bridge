@@ -67,7 +67,9 @@ jobs:
           echo "clawhub_tag=${CLAWHUB_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Install ClawHub CLI
-        run: npm install --global clawhub@latest
+        # Pinned for reproducible releases. Bump intentionally when validating a new
+        # ClawHub CLI release; do not use @latest in CI.
+        run: npm install --global clawhub@0.23.0
 
       - name: Type-check & build
         run: npm run build
