@@ -547,6 +547,101 @@ describe("langgraph_dispatch — dispatch failure tombstones flow (#7)", () => {
     expect(finishArg.flowId).toBe("flow-orphan-1");
     expect(finishArg.stateJson?.terminal_title).toBe("dispatch_failed");
   });
+
+  it("tombstones orphaned flow when stream errors after createThread succeeds", async () => {
+    const finishedFlows: unknown[] = [];
+    const mockFlow = { flowId: "flow-orphan-2", revision: 0 };
+
+    const mockFlowsBinding = {
+      createManaged: vi.fn(() => mockFlow),
+      resume: vi.fn(),
+      get: vi.fn(() => mockFlow),
+      finish: vi.fn((args: unknown) => {
+        finishedFlows.push(args);
+      }),
+      setWaiting: vi.fn(),
+      runTask: vi.fn(),
+      findLatest: vi.fn(() => null),
+      getTaskSummary: vi.fn(() => null),
+    };
+
+    let dispatchExecute: ((id: string, params: unknown) => Promise<unknown>) | undefined;
+
+    const mockApi = {
+      logger: null,
+      pluginConfig: {
+        langgraphBaseUrl: "http://lg.test:2024",
+        callbackToken: "tok-abc",
+        agentId: "main",
+      },
+      runtime: {
+        tasks: {
+          managedFlows: {
+            fromToolContext: vi.fn(() => mockFlowsBinding),
+            bindSession: vi.fn(() => mockFlowsBinding),
+          },
+        },
+      },
+      registerTool: vi.fn((factory: (ctx: unknown) => { name: string; execute: unknown }) => {
+        const toolDef = factory({ sessionKey: "agent:main:dm:u1", deliveryContext: {} });
+        if (toolDef.name === "langgraph_dispatch") {
+          dispatchExecute = toolDef.execute as typeof dispatchExecute;
+        }
+      }),
+      registerHttpRoute: vi.fn(),
+    };
+
+    entry.register(mockApi as never);
+    expect(dispatchExecute).toBeDefined();
+
+    // Mock fetch:
+    //   POST /threads → success returning {thread_id: "tid-x"}
+    //   POST /threads/tid-x/runs/stream → fetch resolves but reader throws mid-stream
+    //     (before metadata frame so runIdPromise rejects)
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if ((url as string).includes("/threads") && !(url as string).includes("/runs/stream")) {
+        return new Response(JSON.stringify({ thread_id: "tid-x" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if ((url as string).includes("/runs/stream")) {
+        // Return a stream that immediately errors (before metadata frame)
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.error(new Error("stream error before metadata"));
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    // Act: call dispatch; advance timers past the run_id timeout
+    const resultPromise = dispatchExecute!("tc-2", { workflow: "fleet" });
+    vi.advanceTimersByTime(15_000);
+    const result = await resultPromise;
+
+    // Assert: dispatch returns status:"error"
+    expect(result as { details?: { status?: string } }).toMatchObject({
+      details: { status: "error" },
+    });
+
+    // Assert: flow is tombstoned (deleted from managedFlows).
+    // Note: with the A1 onClose fix, finish may be called twice — once via
+    // the synthetic terminal from onClose, and once from the outer catch.
+    // In production the second call fails with revision_conflict (caught).
+    // Here we assert it was called AT LEAST once and the first call tombstoned.
+    expect(mockFlowsBinding.finish).toHaveBeenCalled();
+    const finishArg = finishedFlows[0] as {
+      flowId: string;
+      stateJson?: { terminal_title?: string };
+    };
+    expect(finishArg.flowId).toBe("flow-orphan-2");
+  });
 });
 
 describe("langgraph_dispatch — success path", () => {

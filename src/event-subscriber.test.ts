@@ -817,3 +817,63 @@ describe("dispatchAndStream — x-auth-scheme header", () => {
     expect(capture.headers).not.toHaveProperty("x-api-key");
   });
 });
+
+describe("dispatchAndStream — onClose after non-abort stream error", () => {
+  it("calls onClose after non-abort error mid-stream so flow doesn't stay running", async () => {
+    const metadataFrame = `event: metadata\r\ndata: ${JSON.stringify({ run_id: "run-err-1", attempt: 1 })}\r\n\r\n`;
+
+    // Build a ReadableStream that emits the metadata frame then throws.
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        streamController = c;
+      },
+    });
+
+    const fetchImpl = vi.fn(async (_url: string) => {
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+
+    const errors: Error[] = [];
+    const closes: boolean[] = [];
+    let capturedRunId: string | null = null;
+
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-err",
+      flowId: "f-err",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: () => {},
+        onRunId: (id) => {
+          capturedRunId = id;
+        },
+        onError: (e) => errors.push(e),
+        onClose: (sawTerminal) => closes.push(sawTerminal),
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    // onRunId fires when the metadata frame arrives. The subsequent stream error
+    // then exercises the "error after run_id received" path: onError fires AND
+    // onClose still fires (the synthetic-terminal fallback in the caller depends
+    // on this invariant).
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
+    streamController.enqueue(new TextEncoder().encode(metadataFrame));
+
+    // Throw mid-stream (simulates connection reset after metadata received).
+    streamController.error(new Error("connection reset"));
+
+    // Metadata was delivered before the error.
+    await vi.waitFor(() => expect(capturedRunId).toBe("run-err-1"));
+    // Both onError and onClose must have been called.
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+    expect(errors[0]?.message).toMatch(/connection reset/);
+    expect(closes[0]).toBe(false); // sawTerminal is false — no terminal frame was received
+  });
+});

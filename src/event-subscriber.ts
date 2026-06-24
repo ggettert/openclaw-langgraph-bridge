@@ -458,11 +458,17 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
       });
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => "");
-        handlers.onError?.(
-          new Error(
-            `langgraph stream open failed: HTTP ${res.status} ${res.statusText} ${text.slice(0, 200)}`,
-          ),
-        );
+        try {
+          handlers.onError?.(
+            new Error(
+              `langgraph stream open failed: HTTP ${res.status} ${res.statusText} ${text.slice(0, 200)}`,
+            ),
+          );
+        } finally {
+          // Invariant: onClose fires after any non-abort error so the
+          // dispatch/resume caller's synthetic-terminal fallback runs.
+          handlers.onClose?.(sawTerminal);
+        }
         return;
       }
 
@@ -519,7 +525,14 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
         handlers.onClose?.(sawTerminal);
         return;
       }
-      handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
+      try {
+        handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        // Invariant: onClose fires exactly once after any non-abort error so the
+        // dispatch/resume caller's synthetic-terminal fallback runs and the flow
+        // doesn't stay in "running" even if onError itself misbehaves.
+        handlers.onClose?.(sawTerminal);
+      }
     }
   })();
 

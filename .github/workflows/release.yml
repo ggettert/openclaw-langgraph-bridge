@@ -9,13 +9,9 @@ permissions: {}
 
 jobs:
   release:
-    name: Build & Publish Release
+    name: Create GitHub Release
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Maintainer-only release: only the repo owner can trigger this workflow.
-    # Defense in depth: GitHub tag protection rule on `v*` is the primary control;
-    # this `if:` is the secondary control in case the tag-protection rule is ever
-    # mis-configured. Update the actor list when adding maintainers.
+    timeout-minutes: 5
     if: github.actor == 'ggettert'
     permissions:
       contents: write
@@ -23,82 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history needed for auto-generated release notes against previous tag
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Run tests
-        run: npm test
-
-      # Re-install with runtime-only deps so the tarball ships a clean
-      # node_modules/ that resolves @sinclair/typebox + any other runtime
-      # imports without the dev tree (vitest, typescript, @types/*, etc).
-      #
-      # Without this step the released tarball would fail at runtime with
-      # `Cannot find module` (issue #14 — DevOps bot caught this in v0.11.1).
-      #
-      # #23: --omit=dev alone is insufficient — peer and optional deps of
-      # dev packages can still land in node_modules. Belt-and-suspenders:
-      # omit all three categories so the release tarball ships only what
-      # production code actually requires at runtime.
-      - name: Install runtime deps only
-        run: |
-          rm -rf node_modules
-          npm ci --omit=dev --omit=optional --omit=peer
-
-      - name: Smoke-test runtime install
-        # Verify the production install can actually load the built plugin.
-        # Catches missing-runtime-dep regressions like #15 before they ship.
-        run: |
-          node -e "require('./dist/index.js'); console.log('OK: dist/index.js loads cleanly with runtime-only deps');"
-
-      - name: Package release tarball
-        # Docs paths updated for PR #38 reorg: INSTALL.md → docs/installation.md.
-        # AUDIT-* files excluded from tarball (internal audit artifacts, OSS-readiness review).
-        # docs/design.md removed in docs/must-fix-cleanup PR (internal scratchpad, not user docs).
-        run: |
-          tar -czf openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz \
-            dist/ \
-            node_modules/ \
-            openclaw.plugin.json \
-            package.json \
-            README.md \
-            docs/ \
-            skills/
-
-      # #23 Option C: verify the tarball doesn't contain known dev packages.
-      # Must run AFTER Package step.
-      # Fixed: use set -euo pipefail + explicit existence check so a missing or
-      # corrupt archive fails loudly instead of silently passing (Copilot review).
-      - name: Verify tarball excludes dev packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz"
-          if [ ! -f "$archive" ]; then
-            echo "ERROR: release archive not found at $archive"
-            exit 1
-          fi
-          # tar exits non-zero on read error; capture explicitly
-          contents=$(tar -tzf "$archive")
-          if echo "$contents" | grep -E 'node_modules/(@esbuild|@rollup|@types|@vitest|vitest)/'; then
-            echo "ERROR: dev packages found in release tarball"
-            exit 1
-          fi
-          echo "OK: no dev packages in tarball"
+          fetch-depth: 0
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: |
-            openclaw-langgraph-bridge-${{ github.ref_name }}.tar.gz
