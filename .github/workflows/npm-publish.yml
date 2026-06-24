@@ -66,10 +66,15 @@ jobs:
 
       - name: Smoke-test runtime install
         run: |
-          # Reinstall with runtime-only deps; verify dist/index.js loads cleanly.
+          # Reinstall with runtime + peer deps. The plugin imports openclaw/plugin-sdk/core
+          # at runtime, so --omit=peer would cause the smoke test to fail with
+          # "Cannot find module 'openclaw/plugin-sdk/core'". Dev and optional are still
+          # safe to omit because they aren't imported from dist/.
           rm -rf node_modules
-          npm ci --omit=dev --omit=optional --omit=peer
-          node -e "require('./dist/index.js'); console.log('OK: runtime entrypoint loads')"
+          npm ci --omit=dev --omit=optional
+          # Plugin is ESM (tsconfig module=NodeNext + package.json type=module).
+          # Use dynamic import() rather than require() to load it cleanly.
+          node --input-type=module -e "await import('./dist/index.js'); console.log('OK: runtime entrypoint loads')"
 
       - name: Publish to npm
         run: |
