@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "hitl-stub": "./hitl_graph.py:graph"
+  },
+  "env": ".env"
+}
