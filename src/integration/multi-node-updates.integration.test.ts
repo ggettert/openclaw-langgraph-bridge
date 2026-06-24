@@ -37,22 +37,18 @@ const MULTI_NODE_WORKFLOW = process.env.LANGGRAPH_MULTI_NODE_WORKFLOW ?? "multi-
 
 async function isMultiNodeStubReachable(timeoutMs = 2000): Promise<boolean> {
   if (!(await isLangGraphReachable())) return false;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const authHeaders: Record<string, string> = {};
-    if (LANGGRAPH_API_KEY) {
-      authHeaders["x-api-key"] = LANGGRAPH_API_KEY;
-      if (LANGGRAPH_AUTH_SCHEME) authHeaders["x-auth-scheme"] = LANGGRAPH_AUTH_SCHEME;
-    }
     const res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/search`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...authHeaders,
+        ...(LANGGRAPH_API_KEY ? { "x-api-key": LANGGRAPH_API_KEY } : {}),
+        ...(LANGGRAPH_API_KEY && LANGGRAPH_AUTH_SCHEME
+          ? { "x-auth-scheme": LANGGRAPH_AUTH_SCHEME }
+          : {}),
       },
       body: JSON.stringify({ graph_id: MULTI_NODE_WORKFLOW, limit: 1 }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return false;
     const matches = (await res.json()) as Array<{ assistant_id: string }>;
@@ -68,8 +64,6 @@ async function isMultiNodeStubReachable(timeoutMs = 2000): Promise<boolean> {
     return true;
   } catch {
     return false;
-  } finally {
-    clearTimeout(t);
   }
 }
 

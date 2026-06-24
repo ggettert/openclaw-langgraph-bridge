@@ -28,23 +28,18 @@ const HITL_WORKFLOW = process.env.LANGGRAPH_HITL_WORKFLOW ?? "hitl-stub";
 async function isHitlStubReachable(timeoutMs = 2000): Promise<boolean> {
   if (!(await isLangGraphReachable())) return false;
   try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
-    const authHeaders: Record<string, string> = {};
-    if (LANGGRAPH_API_KEY) {
-      authHeaders["x-api-key"] = LANGGRAPH_API_KEY;
-      if (LANGGRAPH_AUTH_SCHEME) authHeaders["x-auth-scheme"] = LANGGRAPH_AUTH_SCHEME;
-    }
     const res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/search`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...authHeaders,
+        ...(LANGGRAPH_API_KEY ? { "x-api-key": LANGGRAPH_API_KEY } : {}),
+        ...(LANGGRAPH_API_KEY && LANGGRAPH_AUTH_SCHEME
+          ? { "x-auth-scheme": LANGGRAPH_AUTH_SCHEME }
+          : {}),
       },
       body: JSON.stringify({ graph_id: HITL_WORKFLOW, limit: 1 }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    clearTimeout(t);
     if (!res.ok) return false;
     const matches = (await res.json()) as Array<{ assistant_id: string }>;
     if (!Array.isArray(matches) || matches.length === 0) {
@@ -86,16 +81,21 @@ describe.skipIf(!reachable)("HITL lifecycle (integration)", () => {
     let dispatchSawTerminal = false;
 
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("dispatch phase timed out waiting for __interrupt__")),
-        25_000,
-      );
       let controller: AbortController | null = null;
+      let timer: NodeJS.Timeout | null = null;
 
       const cleanup = () => {
-        clearTimeout(timer);
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
         controller?.abort();
       };
+
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("dispatch phase timed out waiting for __interrupt__"));
+      }, 25_000);
 
       controller = dispatchAndStream({
         baseUrl: LANGGRAPH_BASE_URL,

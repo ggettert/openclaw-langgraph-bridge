@@ -71,18 +71,14 @@ export async function isLangGraphReachable(timeoutMs = 1000): Promise<boolean> {
 
   // --- 1. Probe /info -------------------------------------------------
   {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${LANGGRAPH_BASE_URL}/info`, {
-        signal: controller.signal,
+        signal: AbortSignal.timeout(timeoutMs),
         headers: authHeaders,
       });
       if (!res.ok) return false;
     } catch {
       return false;
-    } finally {
-      clearTimeout(t);
     }
   }
 
@@ -91,20 +87,16 @@ export async function isLangGraphReachable(timeoutMs = 1000): Promise<boolean> {
   // (e.g. "integration-stub"), POST /assistants/search with a graph_id filter.
   // This matches how the bridge's client resolves assistants under the hood.
   {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;
     try {
       res = await fetch(`${LANGGRAPH_BASE_URL}/assistants/search`, {
         method: "POST",
         headers: { "content-type": "application/json", ...authHeaders },
         body: JSON.stringify({ graph_id: LANGGRAPH_WORKFLOW, limit: 1 }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       return false;
-    } finally {
-      clearTimeout(t);
     }
     if (!res.ok) {
       return false;
