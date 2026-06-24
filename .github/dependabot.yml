@@ -1,0 +1,62 @@
+# Dependabot configuration
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+#
+# Watches for:
+# - Direct + transitive npm dependency updates
+# - GitHub Actions version drift (workflow files)
+#
+# Grouped where reasonable to avoid PR fatigue. Security updates run on a
+# separate cadence and are not group-able.
+
+version: 2
+updates:
+  # ─── npm: production + dev deps ──────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # Group dev tooling — one PR per week instead of 5
+      dev-tools:
+        applies-to: version-updates
+        patterns:
+          - "@types/*"
+          - "@vitest/*"
+          - "vitest"
+          - "typescript"
+          - "tsx"
+          - "eslint*"
+          - "prettier"
+      # Group runtime deps — only @sinclair/typebox today, but futureproof
+      runtime:
+        applies-to: version-updates
+        patterns:
+          - "@sinclair/typebox"
+    # The openclaw peer dependency is excluded from grouping so peer-dep
+    # bumps (which often correlate with security advisories) stay individually
+    # visible and triageable.
+
+  # ─── GitHub Actions: workflow YAML updates ──────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
