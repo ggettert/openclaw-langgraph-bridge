@@ -151,10 +151,10 @@ describe.skipIf(!reachable)("HITL lifecycle (integration)", () => {
     let resumeClosedClean = false;
 
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("resume phase timed out waiting for terminal")),
-        25_000,
-      );
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("resume phase timed out waiting for terminal"));
+      }, 25_000);
       let controller: AbortController | null = null;
 
       const cleanup = () => {

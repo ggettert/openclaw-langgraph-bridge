@@ -6,7 +6,7 @@ the resume payload to a terminal "done" node. Exercises the full dispatch
 → __interrupt__ → resume → terminal lifecycle the bridge plugin handles.
 """
 
-from typing import TypedDict, Literal
+from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt

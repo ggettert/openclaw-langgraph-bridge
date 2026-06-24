@@ -29,7 +29,7 @@ curl -sf -X POST http://localhost:2024/assistants/search \
 Then run the integration suite with this graph as the workflow:
 
 ```bash
-LANGGRAPH_BASE_URL=http://localhost:2024 LANGGRAPH_WORKFLOW=hitl-stub \
+LANGGRAPH_BASE_URL=http://localhost:2024 LANGGRAPH_HITL_WORKFLOW=hitl-stub \
   npm run test:integration -- src/integration/hitl.integration.test.ts
 ```
 
