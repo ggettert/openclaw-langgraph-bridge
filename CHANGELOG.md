@@ -3,12 +3,11 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-(currently pre-1.0; minor versions may include breaking changes).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Each entry references the originating PR. To find the exact commits, see the PR's `Files changed` tab or `git log --grep="#<pr-number>"`.
 
-## [Unreleased]
+## [1.0.0] - 2026-06-24
 
 ### Changed
 - Distribution model: now publishes to npm and ClawHub via dedicated workflows. GitHub release tarball pipeline removed — install paths are now `clawhub:`, `npm:`, `git:`, or build-from-source.

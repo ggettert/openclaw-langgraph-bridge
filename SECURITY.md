@@ -10,7 +10,7 @@ We aim to acknowledge reports within 72 hours. Coordinated disclosure timelines 
 
 ## Supported Versions
 
-The latest released minor version receives security fixes. Pre-1.0 versions may include breaking changes between minor versions; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.
+The latest released minor version receives security fixes. See [CHANGELOG.md](./CHANGELOG.md) for release notes and migration notes.
 
 ## Scope
 
