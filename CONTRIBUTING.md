@@ -190,14 +190,11 @@ Squash noisy WIP commits before opening a PR.
 
 ### How releases work
 
-Releases are triggered by pushing a `v*` tag to `main`. The release workflow (`.github/workflows/release.yml`) handles the rest automatically:
+Releases are triggered by pushing a `v*` tag to `main`. Three workflows fire in parallel:
 
-1. Installs dependencies and builds TypeScript → `dist/`.
-2. Runs the full test suite.
-3. Re-installs with runtime-only deps (`npm ci --omit=dev --omit=optional --omit=peer`) so the tarball ships a clean `node_modules/`.
-4. Packages the release tarball (`dist/`, `node_modules/`, `openclaw.plugin.json`, `package.json`, `README.md`, `docs/`, `skills/`).
-5. Verifies the tarball excludes known dev packages (guards against issue #23 regressing).
-6. Creates a GitHub Release with the tarball attached and auto-generated release notes.
+1. **`npm-publish.yml`** — installs deps, builds TypeScript → `dist/`, runs tests, smoke-tests the runtime entrypoint (`dist/index.js`), then publishes to npm via OIDC trusted publishing (no token rotation needed).
+2. **`clawhub-publish.yml`** — same build + test steps, then publishes to ClawHub via `clawhub package publish`.
+3. **`release.yml`** — creates a GitHub Release with auto-generated release notes.
 
 ### Pre-release checklist
 
@@ -216,11 +213,10 @@ git push origin vX.Y.Z
 
 ### Versioning policy
 
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0 conventions:
-- **Patch** (`0.Y.Z+1`): bugfix only; no breaking changes.
-- **Minor** (`0.Y+1.0`): may include breaking changes. Note them in `CHANGELOG.md` under `### Changed` or `### Removed`.
-
-After v1.0 we will adopt the standard SemVer guarantee (breaking changes = major bump).
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+- **Patch** (`X.Y.Z+1`): bugfix only; no breaking changes.
+- **Minor** (`X.Y+1.0`): new features, backwards compatible.
+- **Major** (`X+1.0.0`): breaking changes. Note them in `CHANGELOG.md` under `### Changed` or `### Removed`.
 
 ### Recovery
 
