@@ -529,14 +529,18 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               // No race window where a fast run can finish before we subscribe.
               // We get the run_id from the first SSE metadata frame and resolve
               // it back to the caller via a promise.
-              let dispatchCtrl!: AbortController;
+              let dispatchCtrl: AbortController | undefined;
+              let ended = false;
               const runIdPromise = new Promise<string>((resolve, reject) => {
                 const timer = setTimeout(() => {
-                  dispatchCtrl.abort();
-                  _inflightControllers.delete(dispatchCtrl);
+                  if (ended) return;
+                  ended = true;
+                  if (dispatchCtrl) {
+                    dispatchCtrl.abort();
+                    _inflightControllers.delete(dispatchCtrl);
+                  }
                   reject(new Error("timed out waiting for run_id metadata frame"));
                 }, timeoutMs);
-                let resolved = false;
                 const onEvent = (body: IncomingEventBody) => {
                   try {
                     processEvent({
@@ -572,30 +576,31 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   },
                   handlers: {
                     onRunId: (runId) => {
-                      if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timer);
-                        resolve(runId);
-                      }
+                      if (ended) return;
+                      ended = true;
+                      clearTimeout(timer);
+                      // Do NOT remove from _inflightControllers here — stream is still alive.
+                      resolve(runId);
                     },
                     onEvent,
                     onError: (err) => {
                       logger?.warn?.(
                         `langgraph-bridge: stream error flow=${flow.flowId}: ${err.message}`,
                       );
-                      dispatchCtrl.abort();
-                      _inflightControllers.delete(dispatchCtrl);
-                      if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timer);
-                        reject(err);
+                      if (ended) return;
+                      ended = true;
+                      clearTimeout(timer);
+                      if (dispatchCtrl) {
+                        dispatchCtrl.abort();
+                        _inflightControllers.delete(dispatchCtrl);
                       }
+                      reject(err);
                     },
                     onClose: (sawTerminal) => {
                       logger?.info?.(
                         `langgraph-bridge: stream closed flow=${flow.flowId} sawTerminal=${sawTerminal}`,
                       );
-                      _inflightControllers.delete(dispatchCtrl);
+                      if (dispatchCtrl) _inflightControllers.delete(dispatchCtrl);
                       // If the stream ended without a terminal-kind event,
                       // emit a synthetic terminal so the agent learns the
                       // run is over.
@@ -619,7 +624,9 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     },
                   },
                 });
-                _inflightControllers.add(dispatchCtrl);
+                if (!ended && dispatchCtrl) {
+                  _inflightControllers.add(dispatchCtrl);
+                }
               });
 
               const runId = await runIdPromise;
@@ -867,14 +874,18 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     );
                   }
                 };
-                let resumeCtrl!: AbortController;
+                let resumeCtrl: AbortController | undefined;
+                let resumeEnded = false;
                 const runIdPromise = new Promise<string>((resolve, reject) => {
                   const timer = setTimeout(() => {
-                    resumeCtrl.abort();
-                    _inflightControllers.delete(resumeCtrl);
+                    if (resumeEnded) return;
+                    resumeEnded = true;
+                    if (resumeCtrl) {
+                      resumeCtrl.abort();
+                      _inflightControllers.delete(resumeCtrl);
+                    }
                     reject(new Error("timed out waiting for resume run_id metadata frame"));
                   }, timeoutMs);
-                  let resolved = false;
                   resumeCtrl = dispatchAndStream({
                     baseUrl,
                     threadId,
@@ -890,30 +901,31 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     },
                     handlers: {
                       onRunId: (runId) => {
-                        if (!resolved) {
-                          resolved = true;
-                          clearTimeout(timer);
-                          resolve(runId);
-                        }
+                        if (resumeEnded) return;
+                        resumeEnded = true;
+                        clearTimeout(timer);
+                        // Do NOT remove from _inflightControllers here — stream is still alive.
+                        resolve(runId);
                       },
                       onEvent,
                       onError: (err) => {
                         logger?.warn?.(
                           `langgraph-bridge: resume stream error flow=${candidate.flowId}: ${err.message}`,
                         );
-                        resumeCtrl.abort();
-                        _inflightControllers.delete(resumeCtrl);
-                        if (!resolved) {
-                          resolved = true;
-                          clearTimeout(timer);
-                          reject(err);
+                        if (resumeEnded) return;
+                        resumeEnded = true;
+                        clearTimeout(timer);
+                        if (resumeCtrl) {
+                          resumeCtrl.abort();
+                          _inflightControllers.delete(resumeCtrl);
                         }
+                        reject(err);
                       },
                       onClose: (sawTerminal) => {
                         logger?.info?.(
                           `langgraph-bridge: resume stream closed flow=${candidate.flowId} sawTerminal=${sawTerminal}`,
                         );
-                        _inflightControllers.delete(resumeCtrl);
+                        if (resumeCtrl) _inflightControllers.delete(resumeCtrl);
                         // Same synthetic-terminal fallback as initial dispatch:
                         // if the resumed run ended without a terminal-kind
                         // event, fabricate one so the agent learns the run
@@ -940,7 +952,9 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                       },
                     },
                   });
-                  _inflightControllers.add(resumeCtrl);
+                  if (!resumeEnded && resumeCtrl) {
+                    _inflightControllers.add(resumeCtrl);
+                  }
                 });
                 const resumeRunId = await runIdPromise;
 
