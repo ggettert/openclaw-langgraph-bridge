@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Each entry references the originating PR. To find the exact commits, see the PR's `Files changed` tab or `git log --grep="#<pr-number>"`.
 
-## [Unreleased]
+## [0.13.1] - 2026-06-25
 
 ### Added
-- `milestone_model` parameter on `langgraph_dispatch`. Forwarded as `--model <value>` to the `openclaw agent` CLI on milestone-event wakes only (e.g. `coder started`, `spec-reviewer finished`). Decision / HITL / terminal wakes always use the session's primary model and ignore this override. Lets callers trade reply quality for latency on high-frequency status events (e.g. set `milestone_model="anthropic/claude-sonnet-4-6"` while keeping the session on Opus). (#83)
+- `milestone_model` parameter on `langgraph_dispatch`. Forwarded as `--model <value>` to the `openclaw agent` CLI on milestone-event wakes only (e.g. `coder started`, `spec-reviewer finished`). Decision / HITL / terminal wakes always use the session's primary model and ignore this override. Lets callers trade reply quality for latency on high-frequency status events (e.g. set `milestone_model="anthropic/claude-sonnet-4-6"` while keeping the session on Opus). (#83, #84)
 
 ### Changed
-- `wakeAgentAsync` gracefully degrades when the gateway rejects the `--model` value ("Model override X is not allowed for agent Y"). On rejection, the bridge logs a WARN, invokes the `onInvalidModel` callback, and retries the subprocess WITHOUT `--model` so the wake still lands on the session's primary model. The webhook handler caches the per-flow rejection so subsequent milestone wakes for the same flow skip the override entirely. (#83)
+- `wakeAgentAsync` gracefully degrades when the gateway rejects the `--model` value ("Model override X is not allowed for agent Y"). On rejection, the bridge logs a WARN, invokes the `onInvalidModel` callback, and retries the subprocess WITHOUT `--model` so the wake still lands on the session's primary model. The webhook handler caches the per-flow rejection so subsequent milestone wakes for the same flow skip the override entirely. (#83, #84)
 
 ## [1.0.0] - 2026-06-24
 
