@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Each entry references the originating PR. To find the exact commits, see the PR's `Files changed` tab or `git log --grep="#<pr-number>"`.
 
+## [Unreleased]
+
+### Security
+
+- **F3 — Timing-safe webhook token comparison.** Replaced the `!==` string comparison in `webhook-handler.ts` with `crypto.timingSafeEqual` via a new `safeCompare(presented, expected)` helper. Prevents timing-oracle attacks that could allow an attacker to infer the `callbackToken` value byte-by-byte. Length-leak on mismatch is accepted (token has a fixed format). (#88)
+
+### Fixed
+
+- **F4 — AbortController wiring for SSE streams.** Both `langgraph_dispatch` and `langgraph_resume` now capture the `AbortController` returned by `dispatchAndStream` and call `.abort()` when the `runIdPromise` timeout fires or `onError` is invoked. A module-level `Set<AbortController>` tracks every open stream; a single idempotent `process.on('SIGTERM')` handler aborts all of them on graceful shutdown. (#88)
+- **F5 — `summaryMaxChars` missing from `openclaw.plugin.json` configSchema.** Added the `summaryMaxChars` property (type `integer`, minimum 100, maximum 50000) to the hand-maintained plugin manifest so OpenClaw surfaces it in config validation and docs. The TypeBox `ConfigSchema` already declared the field; the manifest was out of sync. (#88)
+
 ## [0.13.1] - 2026-06-25
 
 ### Added

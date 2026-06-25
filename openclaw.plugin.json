@@ -36,6 +36,12 @@
         "minimum": 100,
         "maximum": 120000
       },
+      "summaryMaxChars": {
+        "type": "integer",
+        "description": "Maximum characters for event summaries in wake messages. Default 4000.",
+        "minimum": 100,
+        "maximum": 50000
+      },
       "langgraphApiKey": {
         "type": "string",
         "description": "API key for LangSmith Deployment (LangChain's hosted LangGraph). Sent as x-api-key header on all outbound HTTP calls to the LangGraph server. Not required for langgraph dev or self-hosted Aegra deployments.",

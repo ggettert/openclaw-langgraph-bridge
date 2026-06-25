@@ -12,6 +12,29 @@ import { parseMaybeJson } from "./utils.js";
 /** Default per-request timeout for the LangGraph HTTP client (ms). */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+// ---------------------------------------------------------------------------
+// In-flight SSE controller registry (F4)
+// ---------------------------------------------------------------------------
+// Tracks all active `dispatchAndStream` AbortControllers so that a SIGTERM
+// can cancel every open SSE connection before the process exits.
+
+/** All currently open SSE AbortControllers. */
+export const _inflightControllers = new Set<AbortController>();
+
+let _sigtermRegistered = false;
+
+/** Register the SIGTERM handler exactly once (idempotent). */
+export function _ensureSigtermHandler(): void {
+  if (_sigtermRegistered) return;
+  _sigtermRegistered = true;
+  process.on("SIGTERM", () => {
+    for (const c of _inflightControllers) c.abort();
+    _inflightControllers.clear();
+  });
+}
+
+_ensureSigtermHandler();
+
 /**
  * openclaw-langgraph-bridge — Phase 2
  *
@@ -506,11 +529,13 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               // No race window where a fast run can finish before we subscribe.
               // We get the run_id from the first SSE metadata frame and resolve
               // it back to the caller via a promise.
+              let dispatchCtrl!: AbortController;
               const runIdPromise = new Promise<string>((resolve, reject) => {
-                const timer = setTimeout(
-                  () => reject(new Error("timed out waiting for run_id metadata frame")),
-                  timeoutMs,
-                );
+                const timer = setTimeout(() => {
+                  dispatchCtrl.abort();
+                  _inflightControllers.delete(dispatchCtrl);
+                  reject(new Error("timed out waiting for run_id metadata frame"));
+                }, timeoutMs);
                 let resolved = false;
                 const onEvent = (body: IncomingEventBody) => {
                   try {
@@ -527,7 +552,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     );
                   }
                 };
-                dispatchAndStream({
+                dispatchCtrl = dispatchAndStream({
                   baseUrl,
                   threadId,
                   flowId: flow.flowId,
@@ -558,6 +583,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                       logger?.warn?.(
                         `langgraph-bridge: stream error flow=${flow.flowId}: ${err.message}`,
                       );
+                      dispatchCtrl.abort();
+                      _inflightControllers.delete(dispatchCtrl);
                       if (!resolved) {
                         resolved = true;
                         clearTimeout(timer);
@@ -568,6 +595,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                       logger?.info?.(
                         `langgraph-bridge: stream closed flow=${flow.flowId} sawTerminal=${sawTerminal}`,
                       );
+                      _inflightControllers.delete(dispatchCtrl);
                       // If the stream ended without a terminal-kind event,
                       // emit a synthetic terminal so the agent learns the
                       // run is over.
@@ -591,6 +619,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     },
                   },
                 });
+                _inflightControllers.add(dispatchCtrl);
               });
 
               const runId = await runIdPromise;
@@ -838,13 +867,15 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                     );
                   }
                 };
+                let resumeCtrl!: AbortController;
                 const runIdPromise = new Promise<string>((resolve, reject) => {
-                  const timer = setTimeout(
-                    () => reject(new Error("timed out waiting for resume run_id metadata frame")),
-                    timeoutMs,
-                  );
+                  const timer = setTimeout(() => {
+                    resumeCtrl.abort();
+                    _inflightControllers.delete(resumeCtrl);
+                    reject(new Error("timed out waiting for resume run_id metadata frame"));
+                  }, timeoutMs);
                   let resolved = false;
-                  dispatchAndStream({
+                  resumeCtrl = dispatchAndStream({
                     baseUrl,
                     threadId,
                     flowId: candidate.flowId!,
@@ -870,6 +901,8 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                         logger?.warn?.(
                           `langgraph-bridge: resume stream error flow=${candidate.flowId}: ${err.message}`,
                         );
+                        resumeCtrl.abort();
+                        _inflightControllers.delete(resumeCtrl);
                         if (!resolved) {
                           resolved = true;
                           clearTimeout(timer);
@@ -880,6 +913,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                         logger?.info?.(
                           `langgraph-bridge: resume stream closed flow=${candidate.flowId} sawTerminal=${sawTerminal}`,
                         );
+                        _inflightControllers.delete(resumeCtrl);
                         // Same synthetic-terminal fallback as initial dispatch:
                         // if the resumed run ended without a terminal-kind
                         // event, fabricate one so the agent learns the run
@@ -906,6 +940,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                       },
                     },
                   });
+                  _inflightControllers.add(resumeCtrl);
                 });
                 const resumeRunId = await runIdPromise;
 

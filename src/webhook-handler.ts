@@ -34,6 +34,7 @@
  * routing decision lives in event-classifier.ts to keep it cheap to test.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { actionRequiresWake, classifyEvent, type LanggraphEventKind } from "./event-classifier.js";
 import { wakeAgentAsync } from "./wake-agent.js";
@@ -418,6 +419,21 @@ export function buildReplyHint(sessionKey: string): string {
  * handler matches the OpenClawPluginHttpRouteHandler signature
  * (req, res) -> Promise<void>.
  */
+
+/**
+ * Constant-time string comparison using `crypto.timingSafeEqual`.
+ *
+ * Both strings are encoded to UTF-8 before comparison. Returns `false`
+ * immediately when lengths differ (length-leak is acceptable per the
+ * security review; the secret token has a fixed format).
+ */
+export function safeCompare(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export function buildHandler(deps: WebhookHandlerDeps) {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") {
@@ -432,7 +448,7 @@ export function buildHandler(deps: WebhookHandlerDeps) {
         typeof auth === "string" && auth.startsWith("Bearer ")
           ? auth.slice("Bearer ".length)
           : undefined;
-      if (presented !== deps.expectedToken) {
+      if (!safeCompare(presented ?? "", deps.expectedToken)) {
         deps.logger?.warn?.("langgraph-bridge: unauthorized webhook POST");
         reply(res, 401, { error: "unauthorized" });
         return;
