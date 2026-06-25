@@ -138,3 +138,5 @@ Requires Node 22+. Tests cover SSE frame classification, payload normalization, 
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+<!-- ci verify: docs-only path (refs #66) -->
