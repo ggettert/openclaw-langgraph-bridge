@@ -139,14 +139,21 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
     // CLI takes seconds, not ms (per `openclaw agent --help`).
     String(Math.ceil(turnTimeoutMs / 1000)),
   ];
-  const args =
-    params.model && params.model.trim().length > 0
-      ? [...baseArgs, "--model", params.model]
-      : baseArgs;
+
+  // Normalize the model override once and reuse the trimmed form
+  // everywhere downstream. A whitespace-only `params.model` is treated
+  // as unset — we never pass whitespace to the CLI, never log a
+  // `model=   ` line, and never trigger the invalid-model retry path
+  // for a value we didn't actually send.
+  const modelArg =
+    typeof params.model === "string" && params.model.trim().length > 0
+      ? params.model.trim()
+      : undefined;
+  const args = modelArg ? [...baseArgs, "--model", modelArg] : baseArgs;
 
   logger?.info?.(
     `langgraph-bridge: wakeAgentAsync dispatched agent=${params.agentId} sessionKey=${params.sessionKey} msglen=${params.message.length}${
-      params.model ? ` model=${params.model}` : ""
+      modelArg ? ` model=${modelArg}` : ""
     }`,
   );
 
@@ -179,8 +186,12 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
         // (gateway emits via `GatewayClientRequestError`).
         const errorMessage = err.message ?? "";
         const stderrText = (stderr ?? "").toString();
+        // Only treat the failure as an invalid-model rejection when we
+        // actually forwarded `--model` (modelArg defined). A
+        // whitespace-only params.model goes through baseArgs with no
+        // override, so there's nothing to drop and no retry to do.
         const looksLikeInvalidModel =
-          !!params.model &&
+          modelArg !== undefined &&
           (errorMessage.includes("is not allowed for agent") ||
             stderrText.includes("is not allowed for agent") ||
             errorMessage.includes("Model override") ||
@@ -189,9 +200,9 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
         if (looksLikeInvalidModel) {
           const cliError = stderrText.trim() || errorMessage;
           logger?.warn?.(
-            `langgraph-bridge: wakeAgentAsync(${params.agentId}) rejected model=${params.model} — retrying without override. CLI: ${cliError.slice(0, 200)}`,
+            `langgraph-bridge: wakeAgentAsync(${params.agentId}) rejected model=${modelArg} — retrying without override. CLI: ${cliError.slice(0, 200)}`,
           );
-          deps.onInvalidModel?.({ model: params.model!, cliError });
+          deps.onInvalidModel?.({ model: modelArg, cliError });
           // Retry without `--model`. Reuse the SAME execFile/options so
           // tests injecting a fake execFile see both calls.
           execFile(

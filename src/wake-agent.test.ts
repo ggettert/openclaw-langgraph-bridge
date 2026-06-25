@@ -289,5 +289,65 @@ describe("wakeAgentAsync", () => {
       expect(calls).toHaveLength(1);
       expect(onInvalidModel).not.toHaveBeenCalled();
     });
+
+    it("whitespace-only model: no `--model` in args, no retry on invalid-model-shaped failure, no onInvalidModel call", async () => {
+      // Regression test for the bug Copilot caught: a whitespace-only
+      // `params.model` was passing the `!!params.model` truthy check,
+      // which would have (a) tripped the invalid-model retry on any
+      // error matching the pattern, and (b) invoked onInvalidModel
+      // with the untrimmed whitespace string. Fix: normalize once into
+      // `modelArg` (trimmed, or undefined when empty); use it as the
+      // single source of truth for arg emission, logging, retry-gating,
+      // and the onInvalidModel callback.
+      const calls: Array<{ args: readonly string[] }> = [];
+      const fn: ExecFileLike = (_file, args, _options, cb) => {
+        calls.push({ args });
+        queueMicrotask(() =>
+          cb(
+            new Error('Model override "x" is not allowed for agent "main".'),
+            "",
+            'Model override "x" is not allowed for agent "main".',
+          ),
+        );
+        return undefined;
+      };
+      const onInvalidModel = vi.fn();
+      const logger = makeLogger();
+      await expect(
+        wakeAgentAsync(
+          { agentId: "main", sessionKey: "s", message: "m", model: "   " },
+          { execFile: fn as never, logger, onInvalidModel },
+        ),
+      ).rejects.toThrow("Model override");
+      // First (and only) call must not contain --model.
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args).not.toContain("--model");
+      // onInvalidModel must NOT fire — we didn't actually send a model.
+      expect(onInvalidModel).not.toHaveBeenCalled();
+      // The dispatch log line must NOT include `model=` for whitespace-only.
+      const dispatchLog = logger.info.mock.calls.find((c) =>
+        c[0].includes("wakeAgentAsync dispatched"),
+      );
+      expect(dispatchLog).toBeDefined();
+      expect(dispatchLog![0]).not.toMatch(/model=/);
+    });
+
+    it("trims leading/trailing whitespace before forwarding to the CLI", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        {
+          agentId: "main",
+          sessionKey: "s",
+          message: "m",
+          model: "  anthropic/claude-sonnet-4-6  ",
+        },
+        { execFile: fn as never },
+      );
+      const args = calls[0]!.args;
+      const modelIdx = args.indexOf("--model");
+      expect(modelIdx).toBeGreaterThan(-1);
+      // Trimmed value forwarded to CLI — no whitespace.
+      expect(args[modelIdx + 1]).toBe("anthropic/claude-sonnet-4-6");
+    });
   });
 });
