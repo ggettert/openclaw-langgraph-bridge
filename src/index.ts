@@ -119,6 +119,12 @@ const DispatchParams = Type.Object({
         "When true (default), only decision/HITL/terminal events wake the agent; milestone events update flow state silently. When false, milestone events also wake the agent. Status events never wake regardless.",
     }),
   ),
+  milestone_model: Type.Optional(
+    Type.String({
+      description:
+        "Optional model override forwarded as `--model <value>` to the `openclaw agent` CLI on milestone-event wakes only (e.g. coder started/finished, reviewer node started/finished). Use a faster model (e.g. anthropic/claude-sonnet-4-6) for these high-frequency status posts while leaving decision/HITL/terminal wakes on the session's primary model. Accepts arbitrary provider/model strings (no bridge-side validation); the gateway is the source of truth on what's allowed. If the gateway rejects the value (\"Model override X is not allowed for agent Y\"), the bridge logs a WARN, caches the rejection per flow_id, and retries the wake without `--model` so the workflow keeps producing visible events. Decision/HITL/terminal wakes always use the session's primary model and ignore this override.",
+    }),
+  ),
 });
 
 type DispatchInput = Static<typeof DispatchParams>;
@@ -453,6 +459,10 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
               authScheme: langgraphAuthScheme,
             });
             const decisionOnly = params.decision_only ?? true;
+            const milestoneModel =
+              typeof params.milestone_model === "string" && params.milestone_model.trim().length > 0
+                ? params.milestone_model.trim()
+                : undefined;
             const webhookUrl = callbackPublic
               ? callbackPublic.replace(/\/+$/, "") + WEBHOOK_PATH
               : undefined;
@@ -476,6 +486,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 stateJson: {
                   workflow: params.workflow,
                   decision_only: decisionOnly,
+                  milestone_model: milestoneModel ?? null,
                   langgraph_base_url: baseUrl,
                   webhook_url: webhookUrl ?? null,
                   phase: "phase-2-pre-langgraph-call",
@@ -591,6 +602,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 stateJson: {
                   workflow: params.workflow,
                   decision_only: decisionOnly,
+                  milestone_model: milestoneModel ?? null,
                   langgraph_base_url: baseUrl,
                   langgraph_thread_id: threadId,
                   langgraph_run_id: runId,
@@ -613,6 +625,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                 workflow: params.workflow,
                 session_key: sessionKey,
                 decision_only: decisionOnly,
+                milestone_model: milestoneModel ?? null,
                 webhook_url:
                   webhookUrl ??
                   "(not configured — terminal callback skipped; SSE stream still active)",
