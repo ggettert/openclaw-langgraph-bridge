@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { processEvent, type WebhookHandlerDeps } from "./webhook-handler.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  __resetInvalidMilestoneModelFlowsForTest,
+  processEvent,
+  type WebhookHandlerDeps,
+} from "./webhook-handler.js";
 import { makeFakeDeps } from "./test-harness.js";
 import type { WakeAgentParams } from "./wake-agent.js";
 
@@ -765,5 +769,252 @@ describe("buildHandler — HTTP route handler", () => {
     await handler(req, res);
     expect(res.statusCode).toBe(500);
     expect(JSON.parse(res._body)).toMatchObject({ error: "routing_failed" });
+  });
+});
+
+describe("processEvent — milestone_model dispatch param (#83)", () => {
+  beforeEach(() => {
+    __resetInvalidMilestoneModelFlowsForTest();
+  });
+
+  it("forwards `milestone_model` to wake for milestone events when present in stateJson", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+    processEvent({
+      body: { kind: "milestone", flow_id: "f-mm-1", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeParams = calls.wake.mock.calls[0]![0];
+    expect(wakeParams.model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("does NOT forward `milestone_model` to wake for decision events", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+    processEvent({
+      body: { kind: "decision", flow_id: "f-mm-2", title: "needs:input", summary: "approve?" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeParams = calls.wake.mock.calls[0]![0];
+    expect(wakeParams.model).toBeUndefined();
+  });
+
+  it("does NOT forward `milestone_model` to wake for hitl events", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+    processEvent({
+      body: { kind: "hitl", flow_id: "f-mm-3", title: "gate", interrupt_id: "i" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeParams = calls.wake.mock.calls[0]![0];
+    expect(wakeParams.model).toBeUndefined();
+  });
+
+  it("does NOT forward `milestone_model` to wake for terminal events", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+    processEvent({
+      body: { kind: "terminal", flow_id: "f-mm-4", title: "done", summary: "ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    const wakeParams = calls.wake.mock.calls[0]![0];
+    expect(wakeParams.model).toBeUndefined();
+  });
+
+  it("absent / null `milestone_model` in stateJson → no `model` on wake (back-compat)", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { stateJson: { decision_only: false } }, // no milestone_model
+    });
+    processEvent({
+      body: { kind: "milestone", flow_id: "f-mm-5", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    const wakeParams = calls.wake.mock.calls[0]![0];
+    expect(wakeParams.model).toBeUndefined();
+  });
+
+  it("empty / whitespace `milestone_model` is treated as unset", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: { decision_only: false, milestone_model: "   " },
+      },
+    });
+    processEvent({
+      body: { kind: "milestone", flow_id: "f-mm-6", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    const wakeParams = calls.wake.mock.calls[0]![0];
+    expect(wakeParams.model).toBeUndefined();
+  });
+
+  it("after onInvalidModel fires for a flow, subsequent milestones for SAME flow skip the override", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: { decision_only: false, milestone_model: "bad-model" },
+      },
+    });
+
+    // First milestone: model should be forwarded.
+    processEvent({
+      body: { kind: "milestone", flow_id: "f-mm-cache", title: "a" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    const firstWake = calls.wake.mock.calls[0]!;
+    expect(firstWake[0].model).toBe("bad-model");
+    // Simulate wake-agent invoking onInvalidModel after the gateway rejection.
+    const onInvalidModel = firstWake[1]?.onInvalidModel;
+    expect(typeof onInvalidModel).toBe("function");
+    onInvalidModel?.({ model: "bad-model", cliError: "is not allowed" });
+
+    // Second milestone for the SAME flow: model should be undefined now.
+    processEvent({
+      body: { kind: "milestone", flow_id: "f-mm-cache", title: "b" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    const secondWake = calls.wake.mock.calls[1]!;
+    expect(secondWake[0].model).toBeUndefined();
+  });
+
+  it("a DIFFERENT flow with the same bad model still pays the rejection cost once", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: { decision_only: false, milestone_model: "bad-model" },
+      },
+    });
+
+    // Reject for flow A.
+    processEvent({
+      body: { kind: "milestone", flow_id: "flow-A", title: "a" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    calls.wake.mock.calls[0]![1]?.onInvalidModel?.({
+      model: "bad-model",
+      cliError: "is not allowed",
+    });
+
+    // Different flow B: still gets the override on its first attempt.
+    processEvent({
+      body: { kind: "milestone", flow_id: "flow-B", title: "a" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[1]![0].model).toBe("bad-model");
+  });
+
+  it("terminal event GCs the per-flow rejection cache entry", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: { decision_only: false, milestone_model: "bad-model" },
+      },
+    });
+
+    // Reject for flow.
+    processEvent({
+      body: { kind: "milestone", flow_id: "flow-gc", title: "a" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    calls.wake.mock.calls[0]![1]?.onInvalidModel?.({
+      model: "bad-model",
+      cliError: "is not allowed",
+    });
+
+    // Terminal arrives for same flow.
+    processEvent({
+      body: { kind: "terminal", flow_id: "flow-gc", title: "done" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    // A new milestone for the SAME flow id after terminal would now NOT
+    // be suppressed (cache was cleared by terminal). In real life flow
+    // ids are unique per run, but the GC is observable here.
+    processEvent({
+      body: { kind: "milestone", flow_id: "flow-gc", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // calls[0] = first milestone, calls[1] = terminal wake, calls[2] = second milestone
+    const secondMilestone = calls.wake.mock.calls.find(
+      (c, idx) => idx > 0 && c[0].message.includes("[langgraph:milestone]"),
+    );
+    expect(secondMilestone).toBeDefined();
+    expect(secondMilestone![0].model).toBe("bad-model");
+  });
+
+  it("decision_only=true suppresses milestone wakes BEFORE model is ever considered", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: true,
+      flowRecord: {
+        stateJson: { decision_only: true, milestone_model: "anthropic/claude-sonnet-4-6" },
+      },
+    });
+    processEvent({
+      body: { kind: "milestone", flow_id: "f-mm-suppressed", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.runTask).toHaveBeenCalledOnce(); // flow state still updated
+    expect(calls.wake).not.toHaveBeenCalled(); // no wake at all
   });
 });

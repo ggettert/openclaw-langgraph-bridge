@@ -43,6 +43,24 @@ import { truncateSummary } from "./text-utils.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
+/**
+ * Per-flow cache of `milestone_model` values the gateway has already
+ * rejected. After the first rejection (handled by `wake-agent.ts`'s
+ * graceful-degradation retry), subsequent milestone wakes for the same
+ * flow skip the override entirely — no point paying the failure +
+ * retry cost on every event.
+ *
+ * Process-local; not persisted. Bridge restarts re-validate on the
+ * next wake. Cache entries are GC'd on terminal events. Different
+ * flows with the same bad model each pay the rejection cost once.
+ */
+const invalidMilestoneModelFlows = new Set<string>();
+
+/** Test-only helper for resetting the cache between cases. */
+export function __resetInvalidMilestoneModelFlowsForTest(): void {
+  invalidMilestoneModelFlows.clear();
+}
+
 // Terminal task-flow statuses per OpenClaw SDK `TaskFlowStatus`:
 //   "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed"
 //   | "cancelled" | "lost"
@@ -184,6 +202,17 @@ export function processEvent(params: {
   // original docstring promise ("when true, only decision/hitl/terminal wake").
   const decisionOnly: boolean = parsedStateJson?.decision_only !== false;
 
+  // Optional `--model` override for milestone wakes only. Persisted at
+  // dispatch time as stateJson.milestone_model (string or null). When
+  // present, the webhook handler passes it to `wakeAgentAsync` for
+  // milestone events; decision/hitl/terminal wakes always use the
+  // session's primary model and ignore this. See #83.
+  const rawMilestoneModel = parsedStateJson?.milestone_model;
+  const milestoneModel: string | undefined =
+    typeof rawMilestoneModel === "string" && rawMilestoneModel.trim().length > 0
+      ? rawMilestoneModel.trim()
+      : undefined;
+
   // Defense in depth (#10 / #16): if the flow is already in a terminal
   // state, ignore replay frames — LangGraph's stream + webhook can
   // deliver the same kind twice or replay HITL/recap frames out of
@@ -284,15 +313,55 @@ export function processEvent(params: {
       const doEnqueue = deps.enqueueWake ?? enqueueWakeDefault;
       const wakeImpl = deps.wake ?? wakeAgentAsync;
       const wakeMessage = formatEventText(kind, title, summary, sessionKey);
+
+      // Only forward `milestone_model` for milestone events. Decision /
+      // HITL / terminal wakes always use the session's primary model so
+      // reply quality stays high where it matters most. Skip the
+      // override if the gateway already rejected it for this flow
+      // (set by the `onInvalidModel` callback below).
+      const isMilestone = classification.action === "wake-light";
+      const modelForThisWake =
+        isMilestone && milestoneModel && !invalidMilestoneModelFlows.has(body.flow_id)
+          ? milestoneModel
+          : undefined;
+
+      const onInvalidModel = isMilestone
+        ? ({ model, cliError }: { model: string; cliError: string }) => {
+            // First rejection for this flow: cache it so subsequent
+            // milestone wakes skip the override entirely. The retry
+            // without `--model` is handled inside `wakeAgentAsync`; we
+            // just need to ensure NEXT events don't repeat the cycle.
+            if (!invalidMilestoneModelFlows.has(body.flow_id)) {
+              invalidMilestoneModelFlows.add(body.flow_id);
+              deps.logger?.warn?.(
+                `langgraph-bridge: caching milestone_model rejection flow=${body.flow_id} model=${model} — future milestone wakes for this flow will skip the override. CLI: ${cliError.slice(0, 200)}`,
+              );
+            }
+          }
+        : undefined;
+
       doEnqueue(sessionKey, () =>
         Promise.resolve(
           wakeImpl(
-            { agentId: deps.agentId, sessionKey, message: wakeMessage },
-            { logger: deps.logger },
+            {
+              agentId: deps.agentId,
+              sessionKey,
+              message: wakeMessage,
+              model: modelForThisWake,
+            },
+            { logger: deps.logger, onInvalidModel },
           ),
         ),
       );
     }
+  }
+
+  // GC the per-flow rejection cache entry on terminal. The flow id
+  // won't see any more milestone events after this, so holding the
+  // entry forever would leak. Cheap operation either way (no-op if the
+  // flow never had a rejection).
+  if (kind === "terminal") {
+    invalidMilestoneModelFlows.delete(body.flow_id);
   }
 
   deps.logger?.info?.(
