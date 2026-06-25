@@ -4,8 +4,7 @@
  * Why: `requestHeartbeat` and `enqueueSystemEvent` do not wake a Slack-DM
  * session that runs the Anthropic provider directly (not the bundled PI
  * runtime). The empirically-confirmed primitive is the `openclaw agent`
- * CLI invoked from any out-of-process subscriber. Fleetmind's
- * `wakeAgent()` in src/cli/commands/nats.ts is the reference impl.
+ * CLI invoked from any out-of-process subscriber.
  *
  * Shape: fire-and-forget. The CLI opens a WebSocket to the gateway,
  * dispatches one agent turn, and exits. The agent's reply flows out
@@ -20,7 +19,7 @@
  * setup required. We still pass `process.env` through so any future
  * env override (and HOME) is preserved.
  *
- * Two-layer timeout trap (per fleetmind notes):
+ * Two-layer timeout trap:
  *   - The CLI's own `--timeout` (default 600s) bounds how long the CLI
  *     waits for the gateway's final reply over the WebSocket.
  *   - execFile's `timeout` is the OUR-process backstop. If we kill the

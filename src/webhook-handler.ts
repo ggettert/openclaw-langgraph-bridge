@@ -13,8 +13,7 @@
  *     gateway.log (zero `[heartbeat]` dispatches) in late-night dig
  *     2026-06-15 — validated empirically via gateway.log analysis.
  *   - Replaced with `wakeAgent()` from ./wake-agent, which shells out
- *     to `openclaw agent --agent <id> --session-key <key> --message`,
- *     same primitive fleetmind validated in src/cli/commands/nats.ts.
+ *     to `openclaw agent --agent <id> --session-key <key> --message`.
  *   - Agent id is plumbed via `deps.agentId` (sourced from
  *     plugin-config `agentId`, default "main").
  *
