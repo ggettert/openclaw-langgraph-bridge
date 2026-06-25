@@ -181,9 +181,27 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
         // retry the subprocess WITHOUT `--model`. The retry uses the
         // session's primary model so the wake still lands.
         //
-        // Verified empirically against `openclaw agent --model not-a-real-
-        // model/nonsense`; rejection text is stable on the gateway side
-        // (gateway emits via `GatewayClientRequestError`).
+        // Why stderr matching, not exit code:
+        //   The `openclaw agent` CLI exits with code 1 for ALL failure
+        //   modes (verified 2026-06-25): model override rejected,
+        //   unknown agent id, gateway-url-no-creds, etc. There's no
+        //   way to distinguish "user passed a bad --model" from
+        //   "gateway is dead" by exit code alone. Without stderr
+        //   narrowing, the bridge would silently retry on real
+        //   outages, mask legitimate failures, and waste subprocesses.
+        //
+        // Source-pin (brittleness note):
+        //   The error string is emitted by the gateway's
+        //   `GatewayClientRequestError` path when an agent's model
+        //   override is checked against its allowed-models list. If
+        //   that wording changes upstream, the retry-without-model
+        //   path silently stops working — milestones will still fail
+        //   loudly via wake-queue's catch, just without graceful
+        //   degradation. Followup tracked in palace drawer
+        //   `decisions/log` (probed 2026-06-25): upstream the CLI to
+        //   exit with a distinguishable code (e.g. exit 64 per BSD
+        //   sysexits) for user-flag errors, then this match can move
+        //   to exit-code gating.
         const errorMessage = err.message ?? "";
         const stderrText = (stderr ?? "").toString();
         // Only treat the failure as an invalid-model rejection when we
