@@ -43,6 +43,25 @@ Phase event contract: `schema_version: 1` (see [docs/phase-event-contract.md](..
 
 See [references/tools.md](./references/tools.md) for full parameter tables and return shapes.
 
+### Push, not poll — end the turn between events
+
+The plugin's wake architecture is *push-based*: each milestone / HITL / terminal event spawns a fresh agent turn via the `openclaw agent` CLI. Your job in each turn is short: read what just arrived, post one update, end the turn. The plugin handles waiting.
+
+Do NOT:
+
+- Loop within a single turn polling `langgraph_inspect` for the next event — the next event arrives as a *new turn*, not as more data in this one.
+- Sit in `sessions_yield` waiting for "the next frame" — yield ends THIS turn; the next event opens its own turn.
+- Babysit the SSE stream from inside agent logic — the plugin owns the stream. You only see events that the plugin has already classified and translated into a wake.
+- Block waiting on a HITL reply from inside the wake turn — end the turn, let the human's Slack reply re-wake you naturally as the next inbound message.
+
+Do:
+
+- Treat each wake as a self-contained micro-turn: inspect the flow once, decide what to say, post it, end. ~1–2 tool calls + a short reply, then the turn is done.
+- When a HITL event arrives, post the prompt and stop. The human's reply opens a new turn; that's where you call `langgraph_resume`.
+- If you genuinely need state from a prior wake (the flow tells the story across wakes), call `langgraph_inspect` once at the top of the current turn — don't try to remember.
+
+The failure mode this guards against: an agent that yields with the expectation of receiving "more events in this turn" will sit until the runtime times it out, miss the HITL ask entirely, and need a human nudge to recover. Verified in the wild (2026-06-25).
+
 ---
 
 ## Wake response pattern
