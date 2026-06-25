@@ -45,6 +45,13 @@ export type WakeAgentDeps = {
     warn?: (msg: string) => void;
     error?: (msg: string) => void;
   };
+  /**
+   * Called once when the CLI rejects the configured `--model` value with
+   * an "is not allowed" / "not allowed" error. The bridge uses this to
+   * cache per-flow rejection so subsequent milestone wakes skip the
+   * override. Called BEFORE the retry without `--model`.
+   */
+  onInvalidModel?: (params: { model: string; cliError: string }) => void;
 };
 
 export type WakeAgentParams = {
@@ -64,6 +71,23 @@ export type WakeAgentParams = {
    * post to Slack, possibly call tools, write artifacts, etc.).
    */
   turnTimeoutMs?: number;
+  /**
+   * Optional model override forwarded as `--model <value>` to the
+   * `openclaw agent` CLI. When omitted, the CLI uses the session's
+   * configured primary model.
+   *
+   * The webhook handler passes the dispatch-time `milestone_model` here
+   * for milestone events only (not decision/hitl/terminal), so per-event
+   * reply quality vs. latency can be traded off independently.
+   *
+   * If the CLI rejects the value ("Model override \"X\" is not allowed
+   * for agent \"<id>\""), `wakeAgentAsync` invokes `deps.onInvalidModel`
+   * once and retries the subprocess WITHOUT `--model`. Graceful
+   * degradation: the wake still lands, just on the session's primary
+   * model. The webhook handler caches the rejection per flow id so
+   * subsequent milestone wakes skip the override entirely.
+   */
+  model?: string;
 };
 
 const DEFAULT_TURN_TIMEOUT_MS = 600_000;
@@ -103,7 +127,7 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
     return Promise.resolve();
   }
 
-  const args = [
+  const baseArgs = [
     "agent",
     "--agent",
     params.agentId,
@@ -116,8 +140,21 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
     String(Math.ceil(turnTimeoutMs / 1000)),
   ];
 
+  // Normalize the model override once and reuse the trimmed form
+  // everywhere downstream. A whitespace-only `params.model` is treated
+  // as unset — we never pass whitespace to the CLI, never log a
+  // `model=   ` line, and never trigger the invalid-model retry path
+  // for a value we didn't actually send.
+  const modelArg =
+    typeof params.model === "string" && params.model.trim().length > 0
+      ? params.model.trim()
+      : undefined;
+  const args = modelArg ? [...baseArgs, "--model", modelArg] : baseArgs;
+
   logger?.info?.(
-    `langgraph-bridge: wakeAgentAsync dispatched agent=${params.agentId} sessionKey=${params.sessionKey} msglen=${params.message.length}`,
+    `langgraph-bridge: wakeAgentAsync dispatched agent=${params.agentId} sessionKey=${params.sessionKey} msglen=${params.message.length}${
+      modelArg ? ` model=${modelArg}` : ""
+    }`,
   );
 
   return new Promise<void>((resolve, reject) => {
@@ -128,16 +165,92 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
         timeout: turnTimeoutMs + EXEC_BACKSTOP_PADDING_MS,
         env,
       },
-      (err) => {
-        if (err) {
-          logger?.warn?.(
-            `langgraph-bridge: wakeAgentAsync(${params.agentId}) subprocess failed: ${err.message}`,
-          );
-          reject(err);
-        } else {
+      (err, _stdout, stderr) => {
+        if (!err) {
           logger?.info?.(`langgraph-bridge: wakeAgentAsync(${params.agentId}) completed`);
           resolve();
+          return;
         }
+
+        // Graceful degradation for invalid model override.
+        //
+        // The gateway rejects an unknown `--model` value with stderr
+        // containing "Model override \"X\" is not allowed for agent <id>".
+        // We detect that specific failure mode, invoke `onInvalidModel`
+        // so the webhook handler can cache the per-flow rejection, and
+        // retry the subprocess WITHOUT `--model`. The retry uses the
+        // session's primary model so the wake still lands.
+        //
+        // Why stderr matching, not exit code:
+        //   The `openclaw agent` CLI exits with code 1 for ALL failure
+        //   modes (verified 2026-06-25): model override rejected,
+        //   unknown agent id, gateway-url-no-creds, etc. There's no
+        //   way to distinguish "user passed a bad --model" from
+        //   "gateway is dead" by exit code alone. Without stderr
+        //   narrowing, the bridge would silently retry on real
+        //   outages, mask legitimate failures, and waste subprocesses.
+        //
+        // Source-pin (brittleness note):
+        //   The error string is emitted by the gateway's
+        //   `GatewayClientRequestError` path when an agent's model
+        //   override is checked against its allowed-models list. If
+        //   that wording changes upstream, the retry-without-model
+        //   path silently stops working — milestones will still fail
+        //   loudly via wake-queue's catch, just without graceful
+        //   degradation. Followup tracked in palace drawer
+        //   `decisions/log` (probed 2026-06-25): upstream the CLI to
+        //   exit with a distinguishable code (e.g. exit 64 per BSD
+        //   sysexits) for user-flag errors, then this match can move
+        //   to exit-code gating.
+        const errorMessage = err.message ?? "";
+        const stderrText = (stderr ?? "").toString();
+        // Only treat the failure as an invalid-model rejection when we
+        // actually forwarded `--model` (modelArg defined). A
+        // whitespace-only params.model goes through baseArgs with no
+        // override, so there's nothing to drop and no retry to do.
+        const looksLikeInvalidModel =
+          modelArg !== undefined &&
+          (errorMessage.includes("is not allowed for agent") ||
+            stderrText.includes("is not allowed for agent") ||
+            errorMessage.includes("Model override") ||
+            stderrText.includes("Model override"));
+
+        if (looksLikeInvalidModel) {
+          const cliError = stderrText.trim() || errorMessage;
+          logger?.warn?.(
+            `langgraph-bridge: wakeAgentAsync(${params.agentId}) rejected model=${modelArg} — retrying without override. CLI: ${cliError.slice(0, 200)}`,
+          );
+          deps.onInvalidModel?.({ model: modelArg, cliError });
+          // Retry without `--model`. Reuse the SAME execFile/options so
+          // tests injecting a fake execFile see both calls.
+          execFile(
+            bin,
+            baseArgs,
+            {
+              timeout: turnTimeoutMs + EXEC_BACKSTOP_PADDING_MS,
+              env,
+            },
+            (retryErr) => {
+              if (retryErr) {
+                logger?.warn?.(
+                  `langgraph-bridge: wakeAgentAsync(${params.agentId}) retry without --model also failed: ${retryErr.message}`,
+                );
+                reject(retryErr);
+              } else {
+                logger?.info?.(
+                  `langgraph-bridge: wakeAgentAsync(${params.agentId}) completed (retry without --model)`,
+                );
+                resolve();
+              }
+            },
+          );
+          return;
+        }
+
+        logger?.warn?.(
+          `langgraph-bridge: wakeAgentAsync(${params.agentId}) subprocess failed: ${err.message}`,
+        );
+        reject(err);
       },
     );
   });
