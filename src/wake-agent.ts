@@ -19,7 +19,7 @@
  * setup required. We still pass `process.env` through so any future
  * env override (and HOME) is preserved.
  *
- * Two-layer timeout trap (per fleetmind notes):
+ * Two-layer timeout trap:
  *   - The CLI's own `--timeout` (default 600s) bounds how long the CLI
  *     waits for the gateway's final reply over the WebSocket.
  *   - execFile's `timeout` is the OUR-process backstop. If we kill the
