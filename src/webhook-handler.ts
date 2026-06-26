@@ -378,25 +378,44 @@ export function processEvent(params: {
       // decision / hitl / terminal are never deduped — they always reach
       // fireWake. Only wake-light (milestone) goes through the dedup gate.
       if (isMilestone && deps.wakeDedup != null) {
-        const shouldWakeNow = deps.wakeDedup.shouldWakeNow(body, fireWake);
+        // Build a budget-aware trailing callback so that dedup-deferred
+        // wakes are still subject to the per-flow circuit breaker (#3).
+        // Without this, a high-churn flow with many distinct milestone
+        // keys can accumulate trailing wakes that all fire at window-end,
+        // collectively exceeding wakeBudget.maxWakesPerFlowPerWindow.
+        //
+        // Composition: dedup trailing → budget check → (fireWake | budget
+        // trailing → fireWake).  The budget's own trailing callback is
+        // `fireWake` (not another `budgetCheckedFireWake`), so there is no
+        // dedup↔budget defer loop — budget does not re-enter dedup.
+        const budgetCheckedFireWake =
+          deps.wakeBudget != null
+            ? () => {
+                const withinBudget = deps.wakeBudget!.checkBudget(
+                  body.flow_id,
+                  fireWake, // budget's own trailing goes straight to fire
+                );
+                if (withinBudget) {
+                  fireWake();
+                }
+                // else: budget scheduled its own trailing-edge wake (fireWake)
+              }
+            : fireWake;
+
+        const shouldWakeNow = deps.wakeDedup.shouldWakeNow(body, budgetCheckedFireWake);
         if (!shouldWakeNow) {
           deps.logger?.info?.(
             `langgraph-bridge: dedup suppressed immediate milestone wake flow=${body.flow_id} title=${title}`,
           );
-          // fireWake registered as trailing callback; return early.
-          // The budget is not charged here — trailing edge fires later
-          // and will be checked by budget at that point (budget is applied
-          // AFTER dedup, so only unsuppressed wakes count).
-          // (Budget is only wired for immediate wakes; trailing-edge
-          // callbacks bypass budget intentionally — they represent the
-          // consolidated summary, not a new event.)
+          // budgetCheckedFireWake registered as dedup trailing callback;
+          // when the trailing timer fires it will pass through budget.
           return { status: "ok", action: `${classification.action}:dedup-deferred` };
         }
       }
 
       // ── Phase 1: per-flow wake budget (milestone only) ──────────────
-      // Checked AFTER dedup so only unsuppressed wakes count against the
-      // budget. decision / hitl / terminal bypass the budget entirely.
+      // Checked AFTER dedup so only unsuppressed immediate wakes count
+      // against the budget. decision / hitl / terminal bypass entirely.
       if (isMilestone && deps.wakeBudget != null) {
         const withinBudget = deps.wakeBudget.checkBudget(body.flow_id, fireWake);
         if (!withinBudget) {
@@ -417,6 +436,9 @@ export function processEvent(params: {
     invalidMilestoneModelFlows.delete(body.flow_id);
     // Prune wake-budget entry (cancels any pending trailing-edge timer).
     deps.wakeBudget?.pruneFlow(body.flow_id);
+    // Prune dedup keyCache entries for this flow (cancels key timers and
+    // removes the per-flow fanout group so the Map does not grow forever).
+    deps.wakeDedup?.pruneFlow(body.flow_id);
   }
 
   deps.logger?.info?.(

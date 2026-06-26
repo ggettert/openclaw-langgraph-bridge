@@ -74,7 +74,7 @@ function makeFakeClock(initialMs = 0): FakeTimer {
 
 /**
  * Build a generic non-finished milestone using abstract keys.
- * Uses phase/event data so the dedup key is `"${phase}:${event}"`.
+ * Uses phase/event data so the dedup key is `"${flowId}:${phase}:${event}"`.
  */
 function makePhaseBody(phase: string, event: string, flowId = "flow-1"): IncomingEventBody {
   return {
@@ -88,7 +88,7 @@ function makePhaseBody(phase: string, event: string, flowId = "flow-1"): Incomin
 
 /**
  * Build a generic "finished" phase-event body.
- * Uses phase/event so dedup key = `"${phase}:finished"`.
+ * Uses phase/event so dedup key = `"${flowId}:${phase}:finished"`.
  * Contains no production node-name strings.
  */
 function makeFinishedBody(phase: string, flowId = "flow-1"): IncomingEventBody {
@@ -113,18 +113,24 @@ function makeNodeBody(title: string, flowId = "flow-1"): IncomingEventBody {
 // ---------------------------------------------------------------------------
 
 describe("getDedupKey", () => {
-  it("uses phase:event for phase-event bodies", () => {
-    const body = makePhaseBody("alpha", "started");
-    expect(getDedupKey(body)).toBe("alpha:started");
+  it("uses flow_id:phase:event for phase-event bodies", () => {
+    const body = makePhaseBody("alpha", "started", "flow-42");
+    expect(getDedupKey(body)).toBe("flow-42:alpha:started");
   });
 
-  it("uses title for node-style bodies", () => {
-    expect(getDedupKey(makeNodeBody("node:alpha"))).toBe("node:alpha");
+  it("uses flow_id:title for node-style bodies", () => {
+    expect(getDedupKey(makeNodeBody("node:alpha", "flow-7"))).toBe("flow-7:node:alpha");
   });
 
-  it("falls back to unknown:flowId when no title or data.phase", () => {
+  it("falls back to flow_id:unknown when no title or data.phase", () => {
     const body: IncomingEventBody = { kind: "milestone", flow_id: "f99" };
-    expect(getDedupKey(body)).toBe("unknown:f99");
+    expect(getDedupKey(body)).toBe("f99:unknown");
+  });
+
+  it("different flow_ids produce different keys for identical phase/event", () => {
+    const a = makePhaseBody("x", "finished", "flow-A");
+    const b = makePhaseBody("x", "finished", "flow-B");
+    expect(getDedupKey(a)).not.toBe(getDedupKey(b));
   });
 });
 
@@ -198,7 +204,8 @@ describe("WakeDedup — same-key dedup (non-finished)", () => {
     const result = dedup.shouldWakeNow(body, cb); // same key, within window
     expect(result).toBe(false);
     expect(cb).not.toHaveBeenCalled();
-    expect(dedup._testHasPendingTrailingForKey("beta:progress")).toBe(true);
+    // Key is now namespaced: "flow-1:beta:progress"
+    expect(dedup._testHasPendingTrailingForKey("flow-1:beta:progress")).toBe(true);
   });
 
   it("same-key trailing-edge wake fires after window elapses", () => {
@@ -268,8 +275,8 @@ describe("WakeDedup — fanout collapse (finished milestones)", () => {
     const cb = vi.fn();
     expect(dedup.shouldWakeNow(makeFinishedBody("alpha"), cb)).toBe(false);
     expect(cb).not.toHaveBeenCalled();
-    expect(dedup._testHasActiveFanout()).toBe(true);
-    expect(dedup._testActiveFanoutSize()).toBe(1);
+    expect(dedup._testHasActiveFanout("flow-1")).toBe(true);
+    expect(dedup._testActiveFanoutSize("flow-1")).toBe(1);
   });
 
   it("single 'finished' key fires its trailing-edge wake after windowMs", () => {
@@ -281,7 +288,7 @@ describe("WakeDedup — fanout collapse (finished milestones)", () => {
 
     clock.advance(5_000);
     expect(cb).toHaveBeenCalledOnce();
-    expect(dedup._testHasActiveFanout()).toBe(false);
+    expect(dedup._testHasActiveFanout("flow-1")).toBe(false);
   });
 
   it("two distinct 'finished' keys within window collapse to ONE wake", () => {
@@ -295,7 +302,7 @@ describe("WakeDedup — fanout collapse (finished milestones)", () => {
     clock.advance(100); // short interval — same superstep window
     dedup.shouldWakeNow(makeFinishedBody("branch-b"), cb2); // second key — joins group
 
-    expect(dedup._testActiveFanoutSize()).toBe(2);
+    expect(dedup._testActiveFanoutSize("flow-1")).toBe(2);
 
     clock.advance(5_000);
     // Only the latest callback fires (cb2)
@@ -313,7 +320,7 @@ describe("WakeDedup — fanout collapse (finished milestones)", () => {
       clock.advance(50);
     }
 
-    expect(dedup._testActiveFanoutSize()).toBe(5);
+    expect(dedup._testActiveFanoutSize("flow-1")).toBe(5);
 
     clock.advance(5_000);
     const fired = cbs.filter((cb) => cb.mock.calls.length > 0);
@@ -360,7 +367,7 @@ describe("WakeDedup — fanout collapse (finished milestones)", () => {
       clock.advance(50);
     }
 
-    expect(dedup._testActiveFanoutSize()).toBe(3);
+    expect(dedup._testActiveFanoutSize("flow-1")).toBe(3);
     clock.advance(5_000);
     // Exactly one wake fired
     expect(wakes).toHaveLength(1);
@@ -368,7 +375,206 @@ describe("WakeDedup — fanout collapse (finished milestones)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 6: decision / terminal / hitl must bypass dedup entirely
+// Suite 6: per-flow isolation — two concurrent flows, same phase/event
+// ---------------------------------------------------------------------------
+
+describe("WakeDedup — per-flow key isolation", () => {
+  it("same phase/event from two concurrent flows both wake immediately (no cross-flow suppression)", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    const bodyA = makePhaseBody("alpha", "started", "flow-A");
+    const bodyB = makePhaseBody("alpha", "started", "flow-B");
+
+    // Both are "new keys" because they have different flow_ids in their keys
+    expect(dedup.shouldWakeNow(bodyA, vi.fn())).toBe(true);
+    expect(dedup.shouldWakeNow(bodyB, vi.fn())).toBe(true);
+  });
+
+  it("dedup within flow-A does not affect flow-B for same phase/event", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    const bodyA = makePhaseBody("alpha", "progress", "flow-A");
+    const bodyB = makePhaseBody("alpha", "progress", "flow-B");
+
+    dedup.shouldWakeNow(bodyA, vi.fn()); // flow-A: first occurrence, fires
+    const cbA2 = vi.fn();
+    dedup.shouldWakeNow(bodyA, cbA2); // flow-A: second occurrence, deferred
+
+    // flow-B is independent — first occurrence should still fire immediately
+    expect(dedup.shouldWakeNow(bodyB, vi.fn())).toBe(true);
+
+    // flow-A trailing still fires at window end
+    clock.advance(5_000);
+    expect(cbA2).toHaveBeenCalledOnce();
+  });
+
+  it("'finished' fanout groups are per-flow — flow-A fanout does not absorb flow-B finished", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    const cbA = vi.fn();
+    const cbB = vi.fn();
+
+    dedup.shouldWakeNow(makeFinishedBody("worker", "flow-A"), cbA);
+    dedup.shouldWakeNow(makeFinishedBody("worker", "flow-B"), cbB);
+
+    // Each flow has its own fanout group
+    expect(dedup._testActiveFanoutSize("flow-A")).toBe(1);
+    expect(dedup._testActiveFanoutSize("flow-B")).toBe(1);
+
+    clock.advance(5_000);
+    // Both callbacks fire independently (one per flow)
+    expect(cbA).toHaveBeenCalledOnce();
+    expect(cbB).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 7: keyCache pruning on flow terminal
+// ---------------------------------------------------------------------------
+
+describe("WakeDedup — pruneFlow() removes all per-flow state", () => {
+  it("pruneFlow removes all keyCache entries for the flow", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    // Populate several keys for flow-1
+    dedup.shouldWakeNow(makePhaseBody("alpha", "started", "flow-1"), vi.fn());
+    dedup.shouldWakeNow(makePhaseBody("beta", "progress", "flow-1"), vi.fn());
+    dedup.shouldWakeNow(makePhaseBody("gamma", "finished", "flow-1"), vi.fn());
+
+    expect(dedup._testKeyCacheSize()).toBeGreaterThanOrEqual(3);
+
+    // Also add a key for a different flow (should survive pruneFlow("flow-1"))
+    dedup.shouldWakeNow(makePhaseBody("alpha", "started", "flow-2"), vi.fn());
+    const sizeBefore = dedup._testKeyCacheSize();
+
+    dedup.pruneFlow("flow-1");
+
+    // flow-1 entries removed; flow-2 entry survives
+    expect(dedup._testKeyCacheSize()).toBe(sizeBefore - 3);
+  });
+
+  it("pruneFlow cancels pending trailing timers so they do not fire after terminal", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+    const body = makePhaseBody("alpha", "progress", "flow-1");
+
+    dedup.shouldWakeNow(body, vi.fn()); // first: fires
+    const trailing = vi.fn();
+    dedup.shouldWakeNow(body, trailing); // second: pending trailing timer
+
+    dedup.pruneFlow("flow-1");
+
+    // Advance past window — trailing must NOT fire (timer was cancelled)
+    clock.advance(10_000);
+    expect(trailing).not.toHaveBeenCalled();
+  });
+
+  it("pruneFlow cancels and removes the active fanout group for the flow", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+    const fanoutCb = vi.fn();
+
+    dedup.shouldWakeNow(makeFinishedBody("branch-a", "flow-1"), fanoutCb);
+    expect(dedup._testHasActiveFanout("flow-1")).toBe(true);
+
+    dedup.pruneFlow("flow-1");
+    expect(dedup._testHasActiveFanout("flow-1")).toBe(false);
+
+    // Fanout timer must not fire after pruneFlow
+    clock.advance(10_000);
+    expect(fanoutCb).not.toHaveBeenCalled();
+  });
+
+  it("pruneFlow for a nonexistent flow is a no-op", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+    expect(() => dedup.pruneFlow("nonexistent-flow")).not.toThrow();
+    clock.advance(1_000);
+  });
+
+  it("keyCache does not grow unboundedly across many flows when pruneFlow is called on terminal", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    // Simulate 10 flows each emitting 3 milestones then terminating
+    for (let i = 0; i < 10; i++) {
+      const flowId = `flow-${i}`;
+      dedup.shouldWakeNow(makePhaseBody("alpha", "started", flowId), vi.fn());
+      dedup.shouldWakeNow(makePhaseBody("beta", "progress", flowId), vi.fn());
+      dedup.shouldWakeNow(makeFinishedBody("gamma", flowId), vi.fn());
+      dedup.pruneFlow(flowId); // simulate terminal event
+    }
+
+    // After pruning all flows, keyCache must be empty
+    expect(dedup._testKeyCacheSize()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 8: layer-ordering — repeated "finished" for same key
+// ---------------------------------------------------------------------------
+
+describe("WakeDedup — layer ordering: repeated 'finished' for same key", () => {
+  it("single 'finished': deferred to fanout, fires exactly once", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+    const cb = vi.fn();
+
+    dedup.shouldWakeNow(makeFinishedBody("worker", "flow-1"), cb);
+    clock.advance(5_000);
+
+    expect(cb).toHaveBeenCalledOnce();
+  });
+
+  it("duplicate 'finished' for same key: does NOT produce two wakes (only one fanout fire)", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    const cb1 = vi.fn();
+    const cb2 = vi.fn();
+
+    // First "finished" for key — goes to Layer 2, creates fanout group
+    dedup.shouldWakeNow(makeFinishedBody("worker", "flow-1"), cb1);
+    clock.advance(500);
+
+    // Second "finished" for SAME key within window — must route to fanout,
+    // NOT create a competing per-key trailing timer
+    dedup.shouldWakeNow(makeFinishedBody("worker", "flow-1"), cb2);
+
+    // Still only one fanout group, with 1 key (same key added idempotently)
+    expect(dedup._testActiveFanoutSize("flow-1")).toBe(1);
+
+    clock.advance(5_000);
+    // Only ONE wake fires total (cb2 — latest callback wins)
+    expect(cb2).toHaveBeenCalledOnce();
+    expect(cb1).not.toHaveBeenCalled();
+  });
+
+  it("fanout of N parallel distinct 'finished' keys: exactly ONE wake", () => {
+    const clock = makeFakeClock();
+    const dedup = new WakeDedup({ enabled: true, windowMs: 5_000 }, clock.deps);
+
+    const cbs = ["branch-a", "branch-b", "branch-c"].map(() => vi.fn());
+
+    dedup.shouldWakeNow(makeFinishedBody("branch-a", "flow-1"), cbs[0]!);
+    clock.advance(50);
+    dedup.shouldWakeNow(makeFinishedBody("branch-b", "flow-1"), cbs[1]!);
+    clock.advance(50);
+    dedup.shouldWakeNow(makeFinishedBody("branch-c", "flow-1"), cbs[2]!);
+
+    clock.advance(5_000);
+    const fired = cbs.filter((cb) => cb.mock.calls.length > 0);
+    expect(fired).toHaveLength(1);
+    expect(fired[0]).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 9: decision / terminal / hitl must bypass dedup entirely
 // (WakeDedup is not called for those — we validate our classifier logic
 //  separately, but this test documents the contract)
 // ---------------------------------------------------------------------------
@@ -391,7 +597,7 @@ describe("WakeDedup — non-milestone events bypass module (contract test)", () 
 });
 
 // ---------------------------------------------------------------------------
-// Suite 7: fairness integration test
+// Suite 10: fairness integration test
 // ---------------------------------------------------------------------------
 
 describe("WakeDedup + WakeBudget — fairness (50 frames/min allows user message)", () => {
@@ -477,5 +683,54 @@ describe("WakeDedup + WakeBudget — fairness (50 frames/min allows user message
     expect(decisionWakes).toBe(3);
     // Budget was never consulted for these wakes.
     expect(budget._testGetCount("flow")).toBe(0);
+  });
+
+  it("deferred dedup wakes still count against the budget", () => {
+    // This test verifies Fix #3: dedup trailing callbacks must pass through
+    // wakeBudget.checkBudget() before firing fireWake, so the circuit
+    // breaker cannot be bypassed by high-churn flows with many distinct keys.
+    const clock = makeFakeClock();
+
+    const budget = new WakeBudget({ maxWakesPerFlowPerWindow: 2, windowMs: 60_000 }, clock.deps);
+    const dedup = new WakeDedup({ enabled: true, windowMs: 1_000 }, clock.deps);
+
+    let wakeCount = 0;
+    const fireWake = () => {
+      wakeCount++;
+    };
+
+    // Helper: simulates webhook-handler wiring — dedup trailing goes through budget
+    const handleMilestone = (body: IncomingEventBody) => {
+      const budgetCheckedFireWake = () => {
+        const withinBudget = budget.checkBudget(body.flow_id, fireWake);
+        if (withinBudget) fireWake();
+      };
+      const ok = dedup.shouldWakeNow(body, budgetCheckedFireWake);
+      if (ok) {
+        const budgetOk = budget.checkBudget(body.flow_id, fireWake);
+        if (budgetOk) fireWake();
+      }
+    };
+
+    // 3 distinct keys, each fires once immediately (within budget cap=2 for first two)
+    handleMilestone(makePhaseBody("a", "started", "flow-1")); // immediate, count=1 → wakes (within cap)
+    handleMilestone(makePhaseBody("b", "started", "flow-1")); // immediate, count=2 → wakes (at cap)
+    handleMilestone(makePhaseBody("c", "started", "flow-1")); // immediate, count=3 → over budget, deferred
+
+    expect(wakeCount).toBe(2); // only 2 immediate wakes (within cap)
+    expect(budget._testHasPendingTrailing("flow-1")).toBe(true);
+
+    // Advance window — budget trailing fires (carries the latest fireWake callback directly)
+    clock.advance(60_000);
+    expect(wakeCount).toBe(3); // trailing budget wake fires
+
+    // Now add a 4th distinct key that gets dedup-deferred (same key repeat)
+    handleMilestone(makePhaseBody("a", "started", "flow-1")); // dedup-deferred (seen within window)
+
+    // Advance past dedup window — dedup trailing fires → budget check
+    // Budget was reset by the previous window, so this should be within budget
+    clock.advance(2_000);
+    // The dedup trailing callback hits budget — should fire since budget reset
+    expect(wakeCount).toBe(4);
   });
 });
