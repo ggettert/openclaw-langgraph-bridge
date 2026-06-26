@@ -9,6 +9,12 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-06-26
+
+### Fixed
+
+- **Suppress post-terminal node-state replay frames (#94).** After a graph run emitted its terminal event, LangGraph's `stream_mode` could flush buffered node-state snapshots, causing trailing `merge_gate` / node `emit` frames to surface to the agent as phantom "post-terminal replays." The SSE read loop in `event-subscriber.ts` now tracks `terminalSeen` (separate from `sawTerminal`, set only on `terminal`-kind events) and drops subsequent non-terminal emit frames. `terminal`-kind frames are always forwarded — including a graph error frame arriving after a prior terminal (errors are classified as `kind: "terminal"`), so error detail is never swallowed. `hitl` is intentionally excluded — it is a pause/interrupt, not a completion, so frames after an interrupt are unaffected. (#94)
+
 ## [0.14.0] - 2026-06-26
 
 ### Added
