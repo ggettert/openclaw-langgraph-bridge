@@ -877,3 +877,176 @@ describe("dispatchAndStream — onClose after non-abort stream error", () => {
     expect(closes[0]).toBe(false); // sawTerminal is false — no terminal frame was received
   });
 });
+
+// ---------------------------------------------------------------------------
+// dispatchAndStream — post-terminal replay suppression (fix: suppress-post-terminal-replay)
+// ---------------------------------------------------------------------------
+
+describe("dispatchAndStream — post-terminal replay suppression", () => {
+  /**
+   * Build a fetchImpl that streams the given SSE frames (each separated by
+   * "\r\n\r\n" per LangGraph wire format) and then closes the body.
+   */
+  function makeStreamingFetch(sseFrames: string[]) {
+    const fetchImpl = vi.fn(async (_url: string) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const frame of sseFrames) {
+            controller.enqueue(encoder.encode(frame + "\r\n\r\n"));
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    return fetchImpl;
+  }
+
+  it("drops trailing emits after a terminal frame — onEvent called for terminal but NOT for subsequent frames", async () => {
+    // Sequence: milestone → terminal → 2 trailing node-state replay frames
+    // Expected: onEvent fires for milestone + terminal (2 calls), NOT for the trailing two.
+    const sseFrames = [
+      `event: custom\r\ndata: ${JSON.stringify({ phase: "coder", event: "started", ticket_id: "T-1", summary: "starting" })}`,
+      `event: custom\r\ndata: ${JSON.stringify({ kind: "terminal", title: "done", summary: "graph complete" })}`,
+      `event: custom\r\ndata: ${JSON.stringify({ phase: "merge_gate", event: "started", ticket_id: "T-1", summary: "node replay 1" })}`,
+      `event: custom\r\ndata: ${JSON.stringify({ phase: "merge_gate", event: "finished", ticket_id: "T-1", summary: "node replay 2" })}`,
+    ];
+
+    const events: string[] = [];
+    const closes: boolean[] = [];
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-suppress",
+      flowId: "f-suppress",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: (e) => events.push(e.kind),
+        onClose: (st) => closes.push(st),
+      },
+      fetchImpl: makeStreamingFetch(sseFrames) as unknown as typeof fetch,
+    });
+
+    // Wait for onClose — fires only after the SSE body has fully closed, so the
+    // assertion runs after ALL frames (including any trailing replays) are
+    // processed. A fixed setTimeout would be flaky and could pass even if a
+    // trailing frame were forwarded slightly later.
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+
+    // milestone (coder:started) + terminal — but NOT the 2 trailing merge_gate replays
+    expect(events).toHaveLength(2);
+    expect(events[0]).toBe("milestone");
+    expect(events[1]).toBe("terminal");
+  });
+
+  it("regression: all emit frames forwarded when no terminal is present", async () => {
+    // Without a terminal frame, every emit must still be forwarded.
+    const sseFrames = [
+      `event: custom\r\ndata: ${JSON.stringify({ phase: "coder", event: "started", ticket_id: "T-2", summary: "s1" })}`,
+      `event: custom\r\ndata: ${JSON.stringify({ phase: "coder", event: "progress", ticket_id: "T-2", summary: "s2" })}`,
+      `event: updates\r\ndata: ${JSON.stringify({ merge_gate: { state: "pending" } })}`,
+    ];
+
+    const events: string[] = [];
+    const closes: boolean[] = [];
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-noterminal",
+      flowId: "f-noterminal",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: (e) => events.push(e.kind),
+        onClose: (st) => closes.push(st),
+      },
+      fetchImpl: makeStreamingFetch(sseFrames) as unknown as typeof fetch,
+    });
+
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+
+    // All 3 emit frames must be forwarded (milestone, status, milestone)
+    expect(events).toHaveLength(3);
+  });
+
+  it("hitl behavior unchanged: frames after hitl are still forwarded (terminalSeen is NOT set by hitl)", async () => {
+    // hitl is a pause/interrupt — resume spawns a fresh run. terminalSeen must
+    // NOT be set when a hitl fires. Any subsequent emit frames in the same stream
+    // (rare but possible on resume) should still be forwarded.
+    const sseFrames = [
+      `event: updates\r\ndata: ${JSON.stringify({ __interrupt__: [{ id: "int-hitl", value: { prompt: "approve?" } }] })}`,
+      `event: custom\r\ndata: ${JSON.stringify({ phase: "merge_gate", event: "started", ticket_id: "T-3", summary: "after hitl" })}`,
+    ];
+
+    const events: Array<{ kind: string }> = [];
+    const closes: boolean[] = [];
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-hitl",
+      flowId: "f-hitl",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: (e) => events.push({ kind: e.kind }),
+        onClose: (st) => closes.push(st),
+      },
+      fetchImpl: makeStreamingFetch(sseFrames) as unknown as typeof fetch,
+    });
+
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+
+    // hitl event + the subsequent milestone must BOTH be forwarded
+    expect(events).toHaveLength(2);
+    expect(events[0]?.kind).toBe("hitl");
+    expect(events[1]?.kind).toBe("milestone");
+    // onClose receives sawTerminal=true because hitl counts as a real endpoint
+    expect(closes[0]).toBe(true);
+  });
+
+  it("forwards an error frame that arrives after a prior terminal (errors are never suppressed)", async () => {
+    // Sequence: terminal (Mode B custom) → event:error frame
+    //
+    // The terminalSeen guard uses `else if (terminalSeen)` which only fires
+    // when the current frame is NOT kind:"terminal". Error frames are classified
+    // by classifyStreamFrame as kind:"terminal", so they always fall into the
+    // top branch and must be forwarded — never swallowed.
+    //
+    // First terminal: a Mode B custom terminal (same shape used by the sibling
+    // suppression tests above, for consistency).
+    // Second frame: an event:error SSE frame (kind:"terminal", title "error: ...").
+    const sseFrames = [
+      `event: custom\r\ndata: ${JSON.stringify({ kind: "terminal", title: "done", summary: "graph complete" })}`,
+      `event: error\r\ndata: ${JSON.stringify({ error: "KeyError", message: "'ticket_id'" })}`,
+    ];
+
+    const events: Array<{ kind: string; title?: string; summary?: string }> = [];
+    const closes: boolean[] = [];
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-err-after-terminal",
+      flowId: "f-err-after-terminal",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: (e) => events.push({ kind: e.kind, title: e.title, summary: e.summary }),
+        onClose: (st) => closes.push(st),
+      },
+      fetchImpl: makeStreamingFetch(sseFrames) as unknown as typeof fetch,
+    });
+
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+
+    // Both frames must be forwarded — the error is never dropped by terminalSeen
+    expect(events).toHaveLength(2);
+    // First frame: Mode B terminal
+    expect(events[0]?.kind).toBe("terminal");
+    expect(events[0]?.title).toBe("done");
+    // Second frame: the error — classified as terminal, NOT suppressed
+    expect(events[1]?.kind).toBe("terminal");
+    expect(events[1]?.title).toMatch(/error:/i); // e.g. "error: KeyError"
+    expect(events[1]?.summary).toBe("'ticket_id'");
+  });
+});

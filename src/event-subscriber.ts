@@ -425,6 +425,7 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
 
   (async () => {
     let sawTerminal = false;
+    let terminalSeen = false;
     const f = fetchImpl ?? fetch;
     try {
       const streamHeaders: Record<string, string> = {
@@ -514,7 +515,17 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
             if (result.body.kind === "terminal" || result.body.kind === "hitl") {
               sawTerminal = true;
             }
-            handlers.onEvent(result.body);
+            if (result.body.kind === "terminal") {
+              terminalSeen = true;
+              handlers.onEvent(result.body);
+            } else if (terminalSeen) {
+              // Post-terminal node-state replay: LangGraph's stream_mode flushes
+              // buffered node states after graph:end. The graph is not re-running;
+              // drop these so we don't surface phantom merge_gate/node echoes.
+              continue;
+            } else {
+              handlers.onEvent(result.body);
+            }
           }
         }
       }
