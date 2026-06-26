@@ -917,6 +917,7 @@ describe("dispatchAndStream — post-terminal replay suppression", () => {
     ];
 
     const events: string[] = [];
+    const closes: boolean[] = [];
     dispatchAndStream({
       baseUrl: "http://lg.test",
       threadId: "t-suppress",
@@ -925,14 +926,16 @@ describe("dispatchAndStream — post-terminal replay suppression", () => {
       input: null,
       handlers: {
         onEvent: (e) => events.push(e.kind),
-        onClose: () => {},
+        onClose: (st) => closes.push(st),
       },
       fetchImpl: makeStreamingFetch(sseFrames) as unknown as typeof fetch,
     });
 
-    await vi.waitFor(() => expect(events.length).toBeGreaterThanOrEqual(2));
-    // Give the stream a moment to fully drain
-    await new Promise((r) => setTimeout(r, 20));
+    // Wait for onClose — fires only after the SSE body has fully closed, so the
+    // assertion runs after ALL frames (including any trailing replays) are
+    // processed. A fixed setTimeout would be flaky and could pass even if a
+    // trailing frame were forwarded slightly later.
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
 
     // milestone (coder:started) + terminal — but NOT the 2 trailing merge_gate replays
     expect(events).toHaveLength(2);
