@@ -100,6 +100,10 @@ Keys live under `plugins.entries.openclaw-langgraph-bridge.config` in `~/.opencl
 | `callbackToken` | ✓ | — | Bearer token expected on inbound webhook POSTs |
 | `callbackPublicBaseUrl` | — | — | Public base URL the LangGraph server will POST events to. Plugin appends `/plugins/openclaw-langgraph-bridge/events` |
 | `allowedWorkflows` | — | `[]` (all) | Optional allowlist of assistant ids / graph ids. When set: `langgraph_dispatch` and `langgraph_inspect_workflow` block non-listed ids; `langgraph_list_workflows` marks blocked ones `allowed: false`. Empty or unset permits all workflows. |
+| `wakeBudget.maxWakesPerFlowPerWindow` | — | `15` | Maximum agent wakes per flow per rolling window before excess wakes coalesce into one trailing-edge wake (circuit breaker). |
+| `wakeBudget.windowMs` | — | `60000` | Rolling window size (ms) for the per-flow wake budget. |
+| `dedup.enabled` | — | `true` | Enable same-key milestone dedup + parallel-fanout collapse. Set `false` to restore pre-#91 behaviour. |
+| `dedup.windowMs` | — | `5000` | Dedup / fanout-coalesce window (ms). Same-key repeats and concurrent `finished` keys within this window fold into one trailing-edge wake. |
 
 Full config reference: [docs/installation.md → Config reference](./docs/installation.md#config-reference)
 

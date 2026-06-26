@@ -143,6 +143,10 @@ Under `plugins.entries.openclaw-langgraph-bridge`:
 | `summaryMaxChars` | — | `4000` | Maximum characters for event summaries in wake messages. Longer summaries are truncated with a ` …[truncated]` suffix. |
 | `langgraphApiKey` | — | — | API key for LangSmith Deployment or Fleet. When set, sent as `x-api-key` on all outbound LangGraph HTTP requests. Not required for `langgraph dev` or Aegra deployments. |
 | `langgraphAuthScheme` | — | — | Auth scheme sent as `x-auth-scheme` alongside `x-api-key`. Set to `"langsmith-api-key"` for LangSmith Fleet deployments. Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev. |
+| `wakeBudget.maxWakesPerFlowPerWindow` | — | `15` | Per-flow wake-budget cap: maximum agent wakes per `flow_id` per rolling window before excess wakes coalesce into one trailing-edge wake. Set to a very high number to effectively disable the budget. |
+| `wakeBudget.windowMs` | — | `60000` | Rolling window size (ms) for the per-flow wake budget (default 1 minute). |
+| `dedup.enabled` | — | `true` | Enable same-key milestone dedup + parallel-fanout collapse (#91). Set `false` together with a high `wakeBudget.maxWakesPerFlowPerWindow` to restore pre-#91 behaviour (every milestone wakes immediately). |
+| `dedup.windowMs` | — | `5000` | Dedup / fanout-coalesce window (ms, default 5 s). Same-key milestone repeats and concurrent `finished` keys within this window are folded into one trailing-edge wake. |
 
 ### Allowlist hardening (`allowedWorkflows`)
 

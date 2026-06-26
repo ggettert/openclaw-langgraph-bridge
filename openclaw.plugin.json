@@ -53,6 +53,40 @@
         "description": "Auth scheme sent as x-auth-scheme alongside x-api-key. Required for LangSmith Fleet deployments (value: 'langsmith-api-key'). Leave unset for standard LangSmith Deployment, Aegra, or langgraph dev.",
         "minLength": 1,
         "pattern": "^[A-Za-z0-9._\\-+/=]+$"
+      },
+      "wakeBudget": {
+        "type": "object",
+        "description": "Per-flow wake-budget circuit breaker (issue #91). Caps agent wakes at maxWakesPerFlowPerWindow per windowMs; excess wakes are coalesced into one trailing-edge wake.",
+        "properties": {
+          "maxWakesPerFlowPerWindow": {
+            "type": "integer",
+            "description": "Maximum agent wakes per flow_id per rolling window before the budget coalesces further wakes into a single trailing-edge wake. Default 15.",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "windowMs": {
+            "type": "integer",
+            "description": "Rolling window size in milliseconds for the per-flow wake budget. Default 60000 (1 minute).",
+            "minimum": 1000,
+            "maximum": 3600000
+          }
+        }
+      },
+      "dedup": {
+        "type": "object",
+        "description": "Same-node milestone dedup + parallel-fanout collapse (issue #91). Set enabled=false and a high wakeBudget.maxWakesPerFlowPerWindow to restore pre-#91 behaviour.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable same-key milestone dedup + parallel-fanout collapse. Default true."
+          },
+          "windowMs": {
+            "type": "integer",
+            "description": "Dedup / fanout-coalesce window in milliseconds. Same-key milestone repeats and concurrent finished keys within this window fold into one trailing-edge wake. Default 5000 (5 s).",
+            "minimum": 100,
+            "maximum": 300000
+          }
+        }
       }
     }
   },

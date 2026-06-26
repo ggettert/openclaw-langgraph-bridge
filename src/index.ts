@@ -8,6 +8,8 @@ import { dispatchAndStream } from "./event-subscriber.js";
 import type { IncomingEventBody } from "./webhook-handler.js";
 import { formatInspect } from "./inspect-formatter.js";
 import { parseMaybeJson } from "./utils.js";
+import { WakeBudget } from "./wake-budget.js";
+import { WakeDedup } from "./wake-dedup.js";
 
 /** Default per-request timeout for the LangGraph HTTP client (ms). */
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -123,6 +125,60 @@ export const ConfigSchema = Type.Object({
       pattern: "^[A-Za-z0-9._\\-+/=]+$",
     }),
   ),
+  wakeBudget: Type.Optional(
+    Type.Object(
+      {
+        maxWakesPerFlowPerWindow: Type.Optional(
+          Type.Integer({
+            description:
+              "Maximum agent wakes issued per flow_id per rolling window before the budget coalesces further wakes into a single trailing-edge wake. Default 15.",
+            minimum: 1,
+            maximum: 1000,
+            examples: [15],
+          }),
+        ),
+        windowMs: Type.Optional(
+          Type.Integer({
+            description:
+              "Rolling window size in milliseconds for the per-flow wake budget. Default 60000 (1 minute).",
+            minimum: 1000,
+            maximum: 3600000,
+            examples: [60000],
+          }),
+        ),
+      },
+      {
+        description:
+          "Per-flow wake-budget circuit breaker (issue #91). Caps agent wakes at maxWakesPerFlowPerWindow per windowMs; excess wakes are coalesced into one trailing-edge wake. Set maxWakesPerFlowPerWindow to a very high number to effectively disable.",
+      },
+    ),
+  ),
+  dedup: Type.Optional(
+    Type.Object(
+      {
+        enabled: Type.Optional(
+          Type.Boolean({
+            description:
+              "Enable same-key milestone dedup + parallel-fanout collapse. Default true. Set false to restore pre-#91 behaviour (every milestone wakes immediately).",
+            examples: [true],
+          }),
+        ),
+        windowMs: Type.Optional(
+          Type.Integer({
+            description:
+              'Dedup / fanout-coalesce window in milliseconds. Same-key milestone repeats and concurrent "finished" keys within this window are folded into one trailing-edge wake. Default 5000 (5 s).',
+            minimum: 100,
+            maximum: 300000,
+            examples: [5000],
+          }),
+        ),
+      },
+      {
+        description:
+          "Same-node milestone dedup + parallel-fanout collapse (issue #91). Set enabled=false and a high wakeBudget to restore pre-#91 behaviour (escape hatch).",
+      },
+    ),
+  ),
 });
 
 type PluginConfig = Static<typeof ConfigSchema>;
@@ -194,6 +250,16 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
             error: logger.error?.bind(logger),
           }
         : undefined,
+      // Phase 1 (#91): per-flow wake budget.
+      wakeBudget: new WakeBudget({
+        maxWakesPerFlowPerWindow: config.wakeBudget?.maxWakesPerFlowPerWindow ?? 15,
+        windowMs: config.wakeBudget?.windowMs ?? 60_000,
+      }),
+      // Phase 2 (#91): same-key dedup + fanout collapse.
+      wakeDedup: new WakeDedup({
+        enabled: config.dedup?.enabled ?? true,
+        windowMs: config.dedup?.windowMs ?? 5_000,
+      }),
     };
 
     // Concurrent-resume guard (#9): prevents TOCTOU race between status check
