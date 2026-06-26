@@ -1,9 +1,15 @@
 name: Publish to npm
 
+# Manual-only. The tag-push trigger was removed so cutting a release tag does
+# not auto-fire npm publish (the smoke step needs the `openclaw` peer dep and
+# the pipeline is not currently green). Run via the Actions tab when ready.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing git tag to publish (e.g. v0.14.1)
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -26,6 +32,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -40,9 +49,11 @@ jobs:
       - name: Resolve publish mode and verify version
         id: release
         shell: bash
+        env:
+          TARGET_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${TARGET_TAG}"
           RAW_VERSION="${TAG#v}"
           NPM_TAG="latest"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
