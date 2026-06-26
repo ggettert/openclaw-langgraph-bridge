@@ -9,6 +9,12 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-26
+
+### Added
+
+- **Plugin-side wake budget + milestone dedup (#91).** Bounds how often a LangGraph workflow can wake the agent, fixing the per-frame wake storm that could wedge a session during a fleet run. *Phase 1* adds a per-flow sliding-window wake budget — a circuit breaker that caps wakes at `wakeBudget.maxWakesPerFlowPerWindow` (default 15) per `wakeBudget.windowMs` (default 60000) and coalesces overflow into a single trailing-edge wake. *Phase 2* adds same-key milestone dedup keyed on `(flow_id, phase, event)` within `dedup.windowMs` (default 5000; `dedup.enabled` default true), plus topology-agnostic parallel-fanout collapse (no hardcoded node names). Dedup keys are namespaced by `flow_id` so concurrent flows never collide, and per-flow state is pruned on the flow's terminal event. `decision` / `hitl` / `terminal` events always wake immediately and are never deduped or budgeted. Set `dedup.enabled=false` with a high `wakeBudget.maxWakesPerFlowPerWindow` to restore pre-#91 behaviour. (#91, #92)
+
 ### Security
 
 - **F3 — Timing-safe webhook token comparison.** Replaced the `!==` string comparison in `webhook-handler.ts` with `crypto.timingSafeEqual` via a new `safeCompare(presented, expected)` helper. Prevents timing-oracle attacks that could allow an attacker to infer the `callbackToken` value byte-by-byte. Length-leak on mismatch is accepted (token has a fixed format). (#88)

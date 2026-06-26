@@ -2,7 +2,7 @@
   "id": "openclaw-langgraph-bridge",
   "name": "openclaw-langgraph-bridge",
   "description": "Bridges an OpenClaw agent acting as orchestrator with one or more LangGraph workflows.",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "configSchema": {
     "type": "object",
     "properties": {
