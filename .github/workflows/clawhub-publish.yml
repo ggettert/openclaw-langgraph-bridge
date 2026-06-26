@@ -1,5 +1,8 @@
 name: Publish to ClawHub
 
+# Manual-only. The tag-push trigger was removed so cutting a release tag does
+# not auto-fire ClawHub publish (requires the CLAWHUB_TOKEN secret, not set).
+# Run via the Actions tab against an existing tag when ready.
 on:
   workflow_dispatch:
     inputs:
@@ -7,9 +10,6 @@ on:
         description: Existing git tag to publish (e.g. v1.0.0)
         required: true
         type: string
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
