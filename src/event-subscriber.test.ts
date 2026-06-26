@@ -1002,4 +1002,48 @@ describe("dispatchAndStream — post-terminal replay suppression", () => {
     // onClose receives sawTerminal=true because hitl counts as a real endpoint
     expect(closes[0]).toBe(true);
   });
+
+  it("forwards an error frame that arrives after a prior terminal (errors are never suppressed)", async () => {
+    // Sequence: terminal (Mode B custom) → event:error frame
+    //
+    // The terminalSeen guard uses `else if (terminalSeen)` which only fires
+    // when the current frame is NOT kind:"terminal". Error frames are classified
+    // by classifyStreamFrame as kind:"terminal", so they always fall into the
+    // top branch and must be forwarded — never swallowed.
+    //
+    // First terminal: a Mode B custom terminal (same shape used by the sibling
+    // suppression tests above, for consistency).
+    // Second frame: an event:error SSE frame (kind:"terminal", title "error: ...").
+    const sseFrames = [
+      `event: custom\r\ndata: ${JSON.stringify({ kind: "terminal", title: "done", summary: "graph complete" })}`,
+      `event: error\r\ndata: ${JSON.stringify({ error: "KeyError", message: "'ticket_id'" })}`,
+    ];
+
+    const events: Array<{ kind: string; title?: string; summary?: string }> = [];
+    const closes: boolean[] = [];
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-err-after-terminal",
+      flowId: "f-err-after-terminal",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: (e) => events.push({ kind: e.kind, title: e.title, summary: e.summary }),
+        onClose: (st) => closes.push(st),
+      },
+      fetchImpl: makeStreamingFetch(sseFrames) as unknown as typeof fetch,
+    });
+
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+
+    // Both frames must be forwarded — the error is never dropped by terminalSeen
+    expect(events).toHaveLength(2);
+    // First frame: Mode B terminal
+    expect(events[0]?.kind).toBe("terminal");
+    expect(events[0]?.title).toBe("done");
+    // Second frame: the error — classified as terminal, NOT suppressed
+    expect(events[1]?.kind).toBe("terminal");
+    expect(events[1]?.title).toMatch(/error:/i); // e.g. "error: KeyError"
+    expect(events[1]?.summary).toBe("'ticket_id'");
+  });
 });
