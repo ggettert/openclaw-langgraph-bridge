@@ -178,15 +178,58 @@ emit_phase_event(
 
 ## Mode B mapping
 
-The plugin maps phase events to Mode B kinds as follows:
+If a phase event carries **no explicit `kind`**, the plugin's `translatePhaseEventVocabulary`
+fallback derives one from the `event` name alone:
 
-| `event` value | Mode B `kind` | Agent action |
+| `event` value | Fallback `kind` | Agent action |
 |---|---|---|
 | `"started"` | `milestone` | Light wake; agent posts short ack |
 | `"finished"` | `milestone` | Light wake; agent posts outcome |
 | `"failed"` | `terminal` | Full wake; agent posts error summary |
 
 Other `event` values (e.g. `"progress"`) map to `status` (no agent wake by default).
+
+## Set an explicit `kind` (recommended)
+
+> **The fallback is coarse.** It promotes **both** `started` and `finished` to `milestone`.
+> With `decision_only=false` that means *every* phase echo wakes the agent — including each
+> `:started` from parallel nodes (e.g. three reviewers running concurrently) — which floods
+> the thread with low-signal wakes (a "wake-storm").
+
+The plugin honors an explicit `kind` field on the phase payload and passes it through
+verbatim, overriding the `event`-name fallback. Valid values: `status`, `milestone`,
+`terminal`, `decision`, `hitl`.
+
+```python
+emit_phase_event(
+    "reviewer", "started",
+    ticket_id=state["ticket_id"],
+    summary="reviewing diff",
+    kind="status",                 # announcement only — never wakes
+    title="reviewer:started",      # preserve phase:event context (see caveat)
+)
+```
+
+> **⚠️ When you set `kind`, also set `title`.** A payload with `kind` takes the explicit
+> Mode B path, which is checked **before** `translatePhaseEventVocabulary` and therefore
+> skips the phase→title mapping. The plugin then defaults `title` to `custom:<kind>` when
+> it's omitted, collapsing many distinct phases into the same wake title (`custom:milestone`,
+> `custom:status`, …) and degrading flow history. Pass `title=f"{phase}:{event}"` to keep the
+> context. `summary` is preserved either way when present.
+
+Recommended derivation for an `emit_phase_event` wrapper (which should also set
+`title=f"{phase}:{event}"` whenever it sets `kind`):
+
+| Condition | `kind` to set | Rationale |
+|---|---|---|
+| `started` | `status` | Announcement only; should never wake the agent |
+| `finished` **with** `verdict` or `details.terminal` | `milestone` | Carries a real outcome worth a wake |
+| `finished` bare (no outcome) | `status` | "phase done" echo is noise |
+| `failed` | *unset* | Leaving `kind` off takes the phase-event path, which yields `terminal` **and** a `phase:failed` title. Setting `kind="terminal"` reaches the same terminal/`flows.finish()` outcome but collapses the title to `custom:terminal` unless you also set `title`. Omitting `kind` does **not** change whether the flow finishes — `failed` is terminal either way — it just preserves the better title |
+| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` (+ `title`) | A human-gate decision carries no verdict; force a wake so the agent surfaces it |
+
+This cut a typical sdlc-feature run from ~20 wake frames to ~7 signal frames, correct
+regardless of `decision_only`.
 
 ---
 
