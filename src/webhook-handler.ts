@@ -147,6 +147,19 @@ export type WebhookHandlerDeps = {
    * If unset, every milestone fires immediately (legacy behaviour).
    */
   wakeDedup?: WakeDedup;
+  /**
+   * Per-event-class thinking level for proactive wakes (issue #100).
+   * milestone defaults to "off" to stop reasoning-only retry churn;
+   * decision / hitl / terminal inherit the session level unless set.
+   * Validated and applied inside `wakeAgentAsync`; invalid values are
+   * warned and dropped by that layer.
+   */
+  wakeThinking?: {
+    milestone?: string;
+    decision?: string;
+    hitl?: string;
+    terminal?: string;
+  };
   logger?: {
     info?: (msg: string) => void;
     warn?: (msg: string) => void;
@@ -228,6 +241,22 @@ export function processEvent(params: {
     typeof rawMilestoneModel === "string" && rawMilestoneModel.trim().length > 0
       ? rawMilestoneModel.trim()
       : undefined;
+
+  // Per-event-class thinking level (issue #100). milestone defaults to
+  // "off" to suppress reasoning-only turns that the openclaw runtime
+  // retries (queue-backup noise). decision / hitl / terminal inherit
+  // the session-configured reasoning level unless overridden via
+  // deps.wakeThinking.
+  const wakeThinkingLevel: string | undefined =
+    kind === "milestone"
+      ? (deps.wakeThinking?.milestone ?? "off")
+      : kind === "decision"
+        ? deps.wakeThinking?.decision
+        : kind === "hitl"
+          ? deps.wakeThinking?.hitl
+          : kind === "terminal"
+            ? deps.wakeThinking?.terminal
+            : undefined;
 
   // Defense in depth (#10 / #16): if the flow is already in a terminal
   // state, ignore replay frames — LangGraph's stream + webhook can
@@ -367,6 +396,7 @@ export function processEvent(params: {
                 sessionKey,
                 message: wakeMessage,
                 model: modelForThisWake,
+                thinking: wakeThinkingLevel,
               },
               { logger: deps.logger, onInvalidModel },
             ),

@@ -87,10 +87,31 @@ export type WakeAgentParams = {
    * subsequent milestone wakes skip the override entirely.
    */
   model?: string;
+  /**
+   * Optional thinking-level override forwarded as `--thinking <level>` to
+   * the `openclaw agent` CLI. Accepted values (case-sensitive, lowercase):
+   * off | minimal | low | medium | high. When unset or whitespace-only, no
+   * `--thinking` flag is passed and the CLI uses the session's configured
+   * reasoning level. Invalid values are logged as a warning and dropped —
+   * garbage is never forwarded to the CLI.
+   *
+   * Milestone wakes default to "off" via the webhook handler (issue #100)
+   * to stop reasoning-only agent turns from queuing retry churn.
+   */
+  thinking?: string;
 };
 
 const DEFAULT_TURN_TIMEOUT_MS = 600_000;
 const EXEC_BACKSTOP_PADDING_MS = 30_000;
+
+/** Accepted values for the `--thinking` CLI flag (case-sensitive). */
+const VALID_THINKING_LEVELS: ReadonlySet<string> = new Set([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+]);
 
 /**
  * Fire a proactive agent turn. Returns a `Promise<void>` that resolves
@@ -148,12 +169,34 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
     typeof params.model === "string" && params.model.trim().length > 0
       ? params.model.trim()
       : undefined;
-  const args = modelArg ? [...baseArgs, "--model", modelArg] : baseArgs;
+
+  // Normalize and validate the thinking-level override. Same normalization
+  // pattern as modelArg: trim first, treat whitespace-only as unset. Then
+  // gate against the allowed set (VALID_THINKING_LEVELS) so garbage never
+  // reaches the CLI. Invalid values are logged and dropped — the wake still
+  // fires, just without a `--thinking` override.
+  const thinkingRaw =
+    typeof params.thinking === "string" && params.thinking.trim().length > 0
+      ? params.thinking.trim()
+      : undefined;
+  if (thinkingRaw !== undefined && !VALID_THINKING_LEVELS.has(thinkingRaw)) {
+    logger?.warn?.(
+      `langgraph-bridge: wakeAgentAsync ignoring invalid thinking level "${thinkingRaw}" (allowed: off|minimal|low|medium|high)`,
+    );
+  }
+  const thinkingArg =
+    thinkingRaw !== undefined && VALID_THINKING_LEVELS.has(thinkingRaw) ? thinkingRaw : undefined;
+
+  const args = [
+    ...baseArgs,
+    ...(modelArg ? ["--model", modelArg] : []),
+    ...(thinkingArg ? ["--thinking", thinkingArg] : []),
+  ];
 
   logger?.info?.(
     `langgraph-bridge: wakeAgentAsync dispatched agent=${params.agentId} sessionKey=${params.sessionKey} msglen=${params.message.length}${
       modelArg ? ` model=${modelArg}` : ""
-    }`,
+    }${thinkingArg ? ` thinking=${thinkingArg}` : ""}`,
   );
 
   return new Promise<void>((resolve, reject) => {

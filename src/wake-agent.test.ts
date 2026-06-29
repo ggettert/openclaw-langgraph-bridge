@@ -350,4 +350,50 @@ describe("wakeAgentAsync", () => {
       expect(args[modelIdx + 1]).toBe("anthropic/claude-sonnet-4-6");
     });
   });
+
+  describe("--thinking override (issue #100)", () => {
+    it("thinking: 'off' appends --thinking off to args", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "off" },
+        { execFile: fn as never },
+      );
+      const thinkingIdx = calls[0]!.args.indexOf("--thinking");
+      expect(thinkingIdx).toBeGreaterThan(-1);
+      expect(calls[0]!.args[thinkingIdx + 1]).toBe("off");
+    });
+
+    it("thinking: 'minimal' passes through as-is", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "minimal" },
+        { execFile: fn as never },
+      );
+      const thinkingIdx = calls[0]!.args.indexOf("--thinking");
+      expect(thinkingIdx).toBeGreaterThan(-1);
+      expect(calls[0]!.args[thinkingIdx + 1]).toBe("minimal");
+    });
+
+    it("whitespace-only thinking is treated as unset — no --thinking flag emitted", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "   " },
+        { execFile: fn as never },
+      );
+      expect(calls[0]!.args).not.toContain("--thinking");
+    });
+
+    it("invalid thinking level 'ultra' is dropped with a warn — no --thinking flag emitted", async () => {
+      const { fn, calls } = makeExecFile();
+      const logger = makeLogger();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "ultra" },
+        { execFile: fn as never, logger },
+      );
+      expect(calls[0]!.args).not.toContain("--thinking");
+      expect(logger.warn).toHaveBeenCalledOnce();
+      expect(logger.warn.mock.calls[0]![0]).toMatch(/ultra/);
+      expect(logger.warn.mock.calls[0]![0]).toMatch(/off\|minimal\|low\|medium\|high/);
+    });
+  });
 });

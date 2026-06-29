@@ -1018,3 +1018,81 @@ describe("processEvent — milestone_model dispatch param (#83)", () => {
     expect(calls.wake).not.toHaveBeenCalled(); // no wake at all
   });
 });
+
+describe("processEvent — wakeThinking per-event-class (issue #100)", () => {
+  it("milestone wake gets thinking 'off' by default (no wakeThinking config)", () => {
+    const { deps, calls } = makeFakeDeps({ decisionOnly: false });
+    // No deps.wakeThinking set — milestone should default to 'off'.
+    processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.wake.mock.calls[0]![0].thinking).toBe("off");
+  });
+
+  it("milestone thinking is overrideable via deps.wakeThinking.milestone", () => {
+    const { deps, calls } = makeFakeDeps({ decisionOnly: false });
+    deps.wakeThinking = { milestone: "low" };
+    processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.wake.mock.calls[0]![0].thinking).toBe("low");
+  });
+
+  it("decision wake has thinking undefined when deps.wakeThinking.decision is unset (inherit session)", () => {
+    const { deps, calls } = makeFakeDeps({ decisionOnly: false });
+    // No wakeThinking configured — decision should get undefined (inherit).
+    processEvent({
+      body: { kind: "decision", flow_id: "f1", title: "x", summary: "approve?" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.wake.mock.calls[0]![0].thinking).toBeUndefined();
+  });
+
+  it("configured decision thinking level is passed through to wake", () => {
+    const { deps, calls } = makeFakeDeps({ decisionOnly: false });
+    deps.wakeThinking = { decision: "medium" };
+    processEvent({
+      body: { kind: "decision", flow_id: "f1", title: "x", summary: "approve?" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.wake.mock.calls[0]![0].thinking).toBe("medium");
+  });
+
+  it("hitl wake has thinking undefined when deps.wakeThinking.hitl is unset", () => {
+    const { deps, calls } = makeFakeDeps({ decisionOnly: false });
+    processEvent({
+      body: { kind: "hitl", flow_id: "f1", title: "gate", interrupt_id: "i-1" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.wake.mock.calls[0]![0].thinking).toBeUndefined();
+  });
+
+  it("terminal wake has thinking undefined when deps.wakeThinking.terminal is unset", () => {
+    const { deps, calls } = makeFakeDeps({ decisionOnly: false });
+    processEvent({
+      body: { kind: "terminal", flow_id: "f1", title: "done", summary: "ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.wake.mock.calls[0]![0].thinking).toBeUndefined();
+  });
+});
