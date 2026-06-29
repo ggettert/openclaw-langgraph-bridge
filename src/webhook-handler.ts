@@ -63,6 +63,33 @@ export function __resetInvalidMilestoneModelFlowsForTest(): void {
   invalidMilestoneModelFlows.clear();
 }
 
+const MAX_TERMINATED_FLOWS = 10_000;
+/**
+ * Durable per-flow_id terminal latch (issue #101).
+ *
+ * Set synchronously the moment a terminal-kind event is processed, BEFORE
+ * flows.finish() (which can throw a revision conflict mid-storm and leave the
+ * SDK status non-terminal). processEvent checks this in addition to the SDK
+ * record status, so once a flow emits a terminal frame, ALL later frames for
+ * that flow_id are dropped before routing to a wake, regardless of finish()'s
+ * outcome. Process-local; across a bridge restart the SDK status still catches
+ * replays, so the latch only covers the in-process TOCTOU window. Bounded with
+ * FIFO eviction (insertion-order) since replays arrive within minutes.
+ */
+const terminatedFlows = new Set<string>();
+function latchTerminated(flowId: string): void {
+  if (terminatedFlows.has(flowId)) return;
+  terminatedFlows.add(flowId);
+  if (terminatedFlows.size > MAX_TERMINATED_FLOWS) {
+    const oldest = terminatedFlows.values().next().value;
+    if (oldest !== undefined) terminatedFlows.delete(oldest);
+  }
+}
+/** Test-only helper for resetting the latch between cases. */
+export function __resetTerminatedFlowsForTest(): void {
+  terminatedFlows.clear();
+}
+
 // Terminal task-flow statuses per OpenClaw SDK `TaskFlowStatus`:
 //   "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed"
 //   | "cancelled" | "lost"
@@ -268,8 +295,12 @@ export function processEvent(params: {
   //     `inspect`->`resume` to double-fire `langgraph_resume` into an
   //     already-completed flow (#16).
   //   - `finish` on an already-finished flow throws a revision
-  //     conflict, propagates up to a 500 in `buildHandler`, which
-  //     LangGraph treats as retryable (#10).
+  //     conflict, propagating up to a 500 in `buildHandler` (#10).
+  //     A 500 here is a misleading error signal for a flow that's
+  //     actually done — NOT a re-delivery trigger: LangGraph's native
+  //     webhook is terminal-only/single-shot with no 5xx retry, and the
+  //     devops-langgraph workflow emits frames via the SSE stream writer
+  //     (stream_mode=custom), not webhook POSTs.
   //   - `runTask` for status/milestone after terminal records spurious
   //     post-terminal task progress entries, which mislead an operator
   //     reading flow history.
@@ -278,9 +309,10 @@ export function processEvent(params: {
   // a stale agent turn for a flow the consumer already saw close.
   const flowAlreadyTerminated =
     typeof currentFlow?.status === "string" && TERMINAL_FLOW_STATUSES.has(currentFlow.status);
-  if (flowAlreadyTerminated) {
+  const flowLatchedTerminal = terminatedFlows.has(body.flow_id);
+  if (flowAlreadyTerminated || flowLatchedTerminal) {
     deps.logger?.info?.(
-      `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status}`,
+      `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status ?? "unknown"} latched=${flowLatchedTerminal}`,
     );
     return { status: "ok", action: "ignored:post-terminal" };
   }
@@ -323,18 +355,72 @@ export function processEvent(params: {
       // We don't move into "waiting" because the agent decides freely,
       // not against a langgraph interrupt.
       break;
-    case "terminal":
-      flows.finish({
-        flowId: body.flow_id,
-        expectedRevision: flowRevision,
-        stateJson: {
-          terminal_title: title,
-          terminal_summary: summary,
-          data: body.data ?? null,
-        },
-        endedAt: Date.now(),
-      });
+    case "terminal": {
+      // Latch synchronously BEFORE finish(): finish() can throw a revision
+      // conflict when concurrent milestone runTask calls bumped the revision
+      // mid-storm, leaving the SDK status non-terminal. The latch guarantees
+      // every later frame for this flow_id is dropped regardless (issue #101).
+      latchTerminated(body.flow_id);
+      const terminalStateJson = {
+        terminal_title: title,
+        terminal_summary: summary,
+        data: body.data ?? null,
+      };
+      // finish() is the flow's LAST state transition. It can throw a revision
+      // conflict when concurrent milestone runTask calls bumped the revision
+      // between our read (flowRevision) and here. Two-step hardening (#101):
+      //   1. Re-read the current revision and retry finish() once, so the
+      //      terminal state still COMMITS despite the race.
+      //   2. If it still fails, swallow + warn rather than rethrow. A terminal
+      //      event has no productive retry (the flow is done), so a 500 here is
+      //      just a misleading error signal, not a re-delivery trigger.
+      //      (Verified against the LangGraph webhook docs + devops-langgraph
+      //      graph/workflow.py: the native webhook is terminal-only/single-shot
+      //      with no 5xx retry, and the workflow emits frames over the SSE
+      //      stream writer, never webhook POSTs — so nothing re-delivers on a
+      //      500.) The post-terminal replay storm this issue is about comes from
+      //      LangGraph's stream_mode buffer flush after graph:end; the
+      //      synchronous latch already guarantees replay suppression regardless
+      //      of whether the SDK status committed.
+      try {
+        flows.finish({
+          flowId: body.flow_id,
+          expectedRevision: flowRevision,
+          stateJson: terminalStateJson,
+          endedAt: Date.now(),
+        });
+      } catch (finishErr) {
+        const reread = flows.get(body.flow_id) as { revision?: unknown } | undefined;
+        // Normalize identically to flowRevision: flows.get() is typed
+        // Record<string, unknown>, so revision may be a string/non-number.
+        // Without Number() the equality check below is unreliable and a
+        // non-numeric expectedRevision would defeat the conflict hardening.
+        const freshRevision = Number(reread?.revision ?? NaN);
+        try {
+          if (Number.isNaN(freshRevision) || freshRevision === flowRevision) {
+            // Revision didn't move (or is unreadable) — a plain retry would
+            // hit the same conflict, so don't bother; fall through to swallow.
+            throw finishErr;
+          }
+          flows.finish({
+            flowId: body.flow_id,
+            expectedRevision: freshRevision,
+            stateJson: terminalStateJson,
+            endedAt: Date.now(),
+          });
+          deps.logger?.info?.(
+            `langgraph-bridge: terminal finish() committed on revision-refresh retry flow=${body.flow_id} (${flowRevision}->${freshRevision})`,
+          );
+        } catch (retryErr) {
+          deps.logger?.warn?.(
+            `langgraph-bridge: terminal finish() failed for flow=${body.flow_id} — swallowed (terminal events have no productive retry; a 500 here is a misleading signal, not a re-delivery trigger; latch suppresses the stream-replay frames): ${
+              (retryErr as Error)?.message ?? String(retryErr)
+            }`,
+          );
+        }
+      }
       break;
+    }
   }
 
   // 2. Decide whether to wake the agent. Phase 4: wake via the
