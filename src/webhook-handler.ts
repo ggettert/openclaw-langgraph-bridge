@@ -63,6 +63,38 @@ export function __resetInvalidMilestoneModelFlowsForTest(): void {
   invalidMilestoneModelFlows.clear();
 }
 
+const MAX_FLOW_WAKE_MODELS = 10_000;
+/**
+ * Per-flow wake-model pin (issue #101 ask #4 — Direction A: first-wake-model-wins).
+ *
+ * After the first wake of a flow, the model chosen (natural model) is stored
+ * here and reused for ALL subsequent wakes of that flow — regardless of event
+ * class (milestone / decision / hitl / terminal). This prevents the sonnet↔opus
+ * flip that invalidates the Anthropic prompt cache mid-flow (real incident
+ * 2026-06-29, flow c92b1f92, RSS ~1.68 GB).
+ *
+ * `undefined` is a valid pinned value meaning "use the session primary" (i.e.
+ * the natural model for a flow whose first wake had no milestone_model override).
+ * We use a sentinel to distinguish "seen but primary" from "not yet seen":
+ * `flowWakeModelSeen` tracks which flow_ids have been pinned.
+ *
+ * Process-local; bounded with FIFO eviction identical to terminatedFlows.
+ * GC'd on terminal (after the terminal wake fires) so the map stays small.
+ */
+const flowWakeModel = new Map<string, string | undefined>();
+function pinFlowWakeModel(flowId: string, model: string | undefined): void {
+  if (flowWakeModel.has(flowId)) return;
+  flowWakeModel.set(flowId, model);
+  if (flowWakeModel.size > MAX_FLOW_WAKE_MODELS) {
+    const oldest = flowWakeModel.keys().next().value;
+    if (oldest !== undefined) flowWakeModel.delete(oldest);
+  }
+}
+/** Test-only helper for resetting the pin map between cases. */
+export function __resetFlowWakeModelForTest(): void {
+  flowWakeModel.clear();
+}
+
 const MAX_TERMINATED_FLOWS = 10_000;
 /**
  * Durable per-flow_id terminal latch (issue #101).
@@ -187,6 +219,24 @@ export type WebhookHandlerDeps = {
     hitl?: string;
     terminal?: string;
   };
+  /**
+   * Wake-model selection policy for a flow (issue #101 ask #4).
+   *
+   * "first-wake" (default): the model used for the FIRST wake of a flow
+   * (which may be `milestone_model` for a milestone event, or the session
+   * primary for others) is pinned and reused for every subsequent wake of
+   * that flow. This eliminates the sonnet↔opus flip that invalidates the
+   * Anthropic prompt cache mid-flow. Recommended for most deployments.
+   *
+   * "session-primary": every wake — including milestone wakes — always uses
+   * the session's primary model, ignoring `milestone_model` entirely. This
+   * maximises cache stability at the cost of the milestone cost-saving
+   * optimisation (cheaper sonnet turns for low-stakes milestone reports).
+   *
+   * The default is "first-wake". Pass "session-primary" to revert to the
+   * simpler pre-pin behaviour while still benefiting from cache stability.
+   */
+  wakeModelPolicy?: "first-wake" | "session-primary";
   logger?: {
     info?: (msg: string) => void;
     warn?: (msg: string) => void;
@@ -445,16 +495,52 @@ export function processEvent(params: {
       const wakeImpl = deps.wake ?? wakeAgentAsync;
       const wakeMessage = formatEventText(kind, title, summary, sessionKey);
 
-      // Only forward `milestone_model` for milestone events. Decision /
-      // HITL / terminal wakes always use the session's primary model so
-      // reply quality stays high where it matters most. Skip the
-      // override if the gateway already rejected it for this flow
-      // (set by the `onInvalidModel` callback below).
+      // Compute the natural model for this wake: milestone events can use
+      // `milestone_model` from stateJson; all others use the session primary.
+      // Skip the milestone_model override if it was already rejected for
+      // this flow (set by the `onInvalidModel` callback below).
       const isMilestone = classification.action === "wake-light";
-      const modelForThisWake =
+      const naturalModel =
         isMilestone && milestoneModel && !invalidMilestoneModelFlows.has(body.flow_id)
           ? milestoneModel
           : undefined;
+
+      // Per-flow wake-model pin (Direction A: first-wake-model-wins).
+      // "session-primary" policy: ignore milestone_model and always use
+      // session primary (undefined) for maximum cache stability.
+      // "first-wake" (default): pin the natural model on the first wake and
+      // reuse for all later wakes of this flow.
+      const effectivePolicy = deps.wakeModelPolicy ?? "first-wake";
+      let modelForThisWake: string | undefined;
+      if (effectivePolicy === "session-primary") {
+        // Always session primary — no pin, no milestone_model.
+        modelForThisWake = undefined;
+      } else {
+        // first-wake: pin on first encounter; reuse on later wakes.
+        if (flowWakeModel.has(body.flow_id)) {
+          const pinned = flowWakeModel.get(body.flow_id);
+          // If the pinned model was subsequently rejected (onInvalidModel
+          // fired after the first wake), treat the pin as invalidated:
+          // fall back to naturalModel (which is already undefined because
+          // naturalModel computation skips invalidated models).
+          const pinnedIsRejected =
+            typeof pinned === "string" && invalidMilestoneModelFlows.has(body.flow_id);
+          if (pinnedIsRejected) {
+            // Clear the stale pin so future wakes re-evaluate from scratch.
+            flowWakeModel.delete(body.flow_id);
+            pinFlowWakeModel(body.flow_id, naturalModel);
+            modelForThisWake = naturalModel;
+          } else {
+            modelForThisWake = pinned;
+          }
+        } else {
+          // First wake of this flow: store the natural model as the pin.
+          // naturalModel is already undefined if the milestone_model was
+          // previously rejected, so we never re-pin a known-bad model.
+          pinFlowWakeModel(body.flow_id, naturalModel);
+          modelForThisWake = naturalModel;
+        }
+      }
 
       const onInvalidModel = isMilestone
         ? ({ model, cliError }: { model: string; cliError: string }) => {
@@ -549,6 +635,10 @@ export function processEvent(params: {
   // GC per-flow state on terminal. The flow won't see more milestone events
   // after this, so holding per-flow entries forever would leak.
   if (kind === "terminal") {
+    // Delete the wake-model pin AFTER the terminal wake has been dispatched
+    // (the fireWake() call above already ran). Since post-terminal frames are
+    // dropped by the latch, it is safe to evict here.
+    flowWakeModel.delete(body.flow_id);
     invalidMilestoneModelFlows.delete(body.flow_id);
     // Prune wake-budget entry (cancels any pending trailing-edge timer).
     deps.wakeBudget?.pruneFlow(body.flow_id);

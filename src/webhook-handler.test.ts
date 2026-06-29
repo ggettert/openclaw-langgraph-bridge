@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  __resetFlowWakeModelForTest,
   __resetInvalidMilestoneModelFlowsForTest,
   __resetTerminatedFlowsForTest,
   processEvent,
@@ -1431,5 +1432,429 @@ describe("processEvent — per-flow terminal latch (issue #101)", () => {
     expect(result).toEqual({ status: "ok", action: "wake-light" });
     expect(calls.runTask).toHaveBeenCalledOnce();
     expect(calls.wake).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-flow wake-model pin (issue #101 ask #4 — Direction A)
+// ---------------------------------------------------------------------------
+
+describe("processEvent — per-flow wake-model pin (#101 ask #4)", () => {
+  beforeEach(() => {
+    __resetFlowWakeModelForTest();
+    __resetInvalidMilestoneModelFlowsForTest();
+    __resetTerminatedFlowsForTest();
+  });
+
+  // ─── Core fix: first-wake-model-wins ───────────────────────────────────
+
+  it("flow with milestone_model=sonnet: first milestone wake uses sonnet; subsequent decision wake ALSO uses sonnet (pinned)", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // First wake: milestone → pins to sonnet.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-core", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBe("anthropic/claude-sonnet-4-6");
+
+    // Second wake: decision → should use the pin (sonnet), NOT the session primary.
+    processEvent({
+      body: { kind: "decision", flow_id: "pin-core", title: "needs:input", summary: "approve?" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[1]![0].model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("flow with milestone_model=sonnet: terminal wake ALSO uses sonnet (pinned)", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // First wake: milestone → pins to sonnet.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-terminal", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBe("anthropic/claude-sonnet-4-6");
+
+    // Terminal wake → should use the pin.
+    processEvent({
+      body: { kind: "terminal", flow_id: "pin-terminal", title: "done", summary: "ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[1]![0].model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("flow with milestone_model=sonnet: hitl wake ALSO uses sonnet (pinned)", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // First wake: milestone → pins to sonnet.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-hitl", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    // HITL wake → should use the pin.
+    processEvent({
+      body: {
+        kind: "hitl",
+        flow_id: "pin-hitl",
+        title: "approval-gate",
+        interrupt_id: "i-42",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[1]![0].model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  // ─── No milestone_model: pins primary (undefined) ──────────────────────
+
+  it("flow with NO milestone_model: every wake uses undefined (session primary) — no change, no thrash", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: { decision_only: false }, // no milestone_model
+      },
+    });
+
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-no-model", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBeUndefined();
+
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "pin-no-model",
+        title: "needs:input",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[1]![0].model).toBeUndefined();
+  });
+
+  // ─── First wake is a decision: pins primary; later milestone stays primary ─
+
+  it("flow whose first wake is a decision pins primary; later milestone wake reuses primary (does NOT switch to milestone_model mid-flow)", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // First wake: decision (no milestone_model override) → pins primary (undefined).
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "pin-decision-first",
+        title: "needs:input",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBeUndefined();
+
+    // Second wake: milestone (has milestone_model) → pin was set to undefined, reuses it.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-decision-first", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // Pin was set to undefined on the first wake — milestone must NOT switch to sonnet.
+    expect(calls.wake.mock.calls[1]![0].model).toBeUndefined();
+  });
+
+  // ─── wakeModelPolicy="session-primary" ────────────────────────────────
+
+  it('wakeModelPolicy="session-primary": milestone wake ignores milestone_model and uses session primary', () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+    deps.wakeModelPolicy = "session-primary";
+
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-policy-sp", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // Despite milestone_model being set, session-primary policy ignores it.
+    expect(calls.wake.mock.calls[0]![0].model).toBeUndefined();
+  });
+
+  it('wakeModelPolicy="session-primary": subsequent decision also uses session primary (no pin established)', () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+    deps.wakeModelPolicy = "session-primary";
+
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-policy-sp2", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "pin-policy-sp2",
+        title: "needs:input",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBeUndefined();
+    expect(calls.wake.mock.calls[1]![0].model).toBeUndefined();
+  });
+
+  // ─── Cross-flow isolation ──────────────────────────────────────────────
+
+  it("cross-flow isolation: flow A's pin does not affect flow B", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // Flow A: first wake is milestone → pins sonnet.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-flow-A", title: "build:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBe("anthropic/claude-sonnet-4-6");
+
+    // Flow B: first wake is decision → natural model is undefined; pins undefined.
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "pin-flow-B",
+        title: "needs:input",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // Flow B should get its own pin (undefined from decision), not A's pin.
+    expect(calls.wake.mock.calls[1]![0].model).toBeUndefined();
+
+    // Flow A: subsequent decision should still use A's pin (sonnet).
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "pin-flow-A",
+        title: "approve?",
+        summary: "yes?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[2]![0].model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  // ─── Rejected milestone_model is not re-pinned ────────────────────────
+
+  it("rejected milestone_model (invalidMilestoneModelFlows) is not re-pinned; subsequent wakes use session primary", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: { decision_only: false, milestone_model: "bad-model" },
+      },
+    });
+
+    // First milestone wake: natural model = bad-model.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-rejected", title: "a" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBe("bad-model");
+
+    // Simulate gateway rejection — adds the flow to invalidMilestoneModelFlows.
+    const onInvalidModel = calls.wake.mock.calls[0]![1]?.onInvalidModel;
+    expect(typeof onInvalidModel).toBe("function");
+    onInvalidModel?.({ model: "bad-model", cliError: "is not allowed" });
+
+    // Second milestone: natural model now undefined (bad-model rejected).
+    // The pin was NOT set on the first wake (first wake used bad-model but pin
+    // is set from naturalModel; after invalidation naturalModel becomes undefined
+    // for subsequent wakes). Verify the second wake uses undefined.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-rejected", title: "b" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[1]![0].model).toBeUndefined();
+
+    // Subsequent decision wake: also gets undefined (not bad-model).
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "pin-rejected",
+        title: "needs:input",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[2]![0].model).toBeUndefined();
+  });
+
+  // ─── GC on terminal ───────────────────────────────────────────────────
+
+  it("pin map entry is GC'd on terminal; post-terminal frames are dropped by latch (not by pin)", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // Pin the model.
+    processEvent({
+      body: { kind: "milestone", flow_id: "pin-gc", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    // Terminal: should use the pinned model, THEN GC the pin.
+    processEvent({
+      body: { kind: "terminal", flow_id: "pin-gc", title: "done", summary: "ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // Terminal wake used the pinned model.
+    expect(calls.wake.mock.calls[1]![0].model).toBe("anthropic/claude-sonnet-4-6");
+
+    // Post-terminal milestone: dropped by latch (not pin map).
+    const result = processEvent({
+      body: { kind: "milestone", flow_id: "pin-gc", title: "replay" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(result).toEqual({ status: "ok", action: "ignored:post-terminal" });
+    expect(calls.wake).toHaveBeenCalledTimes(2); // Only the original two wakes.
+  });
+
+  // ─── __resetFlowWakeModelForTest clears state between cases ───────────
+
+  it("__resetFlowWakeModelForTest clears pins between test cases", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: {
+        stateJson: {
+          decision_only: false,
+          milestone_model: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    });
+
+    // Pin sonnet on flow "reuse".
+    processEvent({
+      body: { kind: "milestone", flow_id: "reuse", title: "x" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake.mock.calls[0]![0].model).toBe("anthropic/claude-sonnet-4-6");
+
+    // Clear pin state — simulates beforeEach reset.
+    __resetFlowWakeModelForTest();
+    calls.wake.mockClear();
+
+    // Same flow "reuse" now starts fresh: a decision wake computes the natural
+    // model (undefined for decision) and pins that.
+    processEvent({
+      body: {
+        kind: "decision",
+        flow_id: "reuse",
+        title: "needs:input",
+        summary: "approve?",
+      },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    // Pin was cleared; new first-wake for "reuse" is a decision → natural is undefined.
+    expect(calls.wake.mock.calls[0]![0].model).toBeUndefined();
   });
 });
