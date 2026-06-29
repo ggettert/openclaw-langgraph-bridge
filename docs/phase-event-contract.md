@@ -229,7 +229,7 @@ Recommended derivation for an `emit_phase_event` wrapper (which should also set
 | gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` (+ `title`) | A human-gate decision carries no verdict; force a wake so the agent surfaces it |
 
 This cut a typical sdlc-feature run from ~20 wake frames to ~7 signal frames, correct
-regardless of `decision_only`. See `devops-langgraph#29` for the graph-side implementation.
+regardless of `decision_only`.
 
 ---
 

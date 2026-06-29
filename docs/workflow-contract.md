@@ -224,7 +224,7 @@ Recommended derivation (the one `emit_phase_event` wrappers should encode — an
 | `failed` | *unset* | Leave `kind` off so the payload takes the phase-event path, which yields `terminal` **and** a `phase:failed` title. Setting `kind="terminal"` reaches the same terminal/`flows.finish()` outcome but collapses the title to `custom:terminal` unless you also set `title`. Omitting `kind` does **not** change whether the flow finishes — `failed` is terminal either way — it just keeps the better title for free |
 | gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` (+ `title`) | A human-gate decision carries no verdict, so force a wake so the agent surfaces it |
 
-Net effect on a typical sdlc-feature run: ~20 wake frames → ~7 signal frames, and the result is correct regardless of `decision_only`. (Ref: graph-side fix in `devops-langgraph#29`.)
+Net effect on a typical sdlc-feature run: ~20 wake frames → ~7 signal frames, and the result is correct regardless of `decision_only`.
 
 For detailed phase event docs, worked examples, and the full optional field list, see [`docs/phase-event-contract.md`](./phase-event-contract.md).
 
