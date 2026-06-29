@@ -263,11 +263,18 @@ export function wakeAgentAsync(params: WakeAgentParams, deps: WakeAgentDeps = {}
             `langgraph-bridge: wakeAgentAsync(${params.agentId}) rejected model=${modelArg} — retrying without override. CLI: ${cliError.slice(0, 200)}`,
           );
           deps.onInvalidModel?.({ model: modelArg, cliError });
-          // Retry without `--model`. Reuse the SAME execFile/options so
-          // tests injecting a fake execFile see both calls.
+          // Retry without `--model`, but PRESERVE `--thinking`. Only the
+          // model override was rejected; the thinking level is an
+          // independent flag and must survive the fallback — otherwise a
+          // milestone wake (which sets both model=milestone_model and
+          // thinking=off) would silently regain reasoning on retry and
+          // reintroduce the reasoning-only retry churn (issue #100).
+          // Reuse the SAME execFile/options so tests injecting a fake
+          // execFile see both calls.
+          const retryArgs = thinkingArg ? [...baseArgs, "--thinking", thinkingArg] : baseArgs;
           execFile(
             bin,
-            baseArgs,
+            retryArgs,
             {
               timeout: turnTimeoutMs + EXEC_BACKSTOP_PADDING_MS,
               env,
