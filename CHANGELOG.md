@@ -9,13 +9,21 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-29
+
 ### Added
+
+- **Per-event-class thinking level for proactive wakes (#100).** Milestone wakes are silent status nudges; with reasoning enabled they produced reasoning-only turns (thinking block, empty final content) that the OpenClaw runtime retried, churning the session queue and holding the lane longer than necessary. `wakeAgentAsync` now accepts an optional `--thinking` pass-through, and milestone-class wakes default to `thinking: "off"`. Configurable per event class via `deps.wakeThinking.{milestone,decision,hitl,terminal}`; `decision` / `hitl` / `terminal` inherit the session-configured reasoning level unless explicitly overridden. (#100, #103)
 
 - **Per-flow wake-model pin to stop sonnet↔opus cache thrash (#101 ask #4).** Previously, the wake model was chosen per event-class: milestone wakes used `milestone_model` (e.g. `sonnet-4-6`) while decision / HITL / terminal wakes fell back to the session primary (e.g. `opus-4-8`). Across a single flow this caused the model to flip on nearly every wake, invalidating the Anthropic prompt cache and driving memory pressure (real incident 2026-06-29, flow `c92b1f92`, RSS ~1.68 GB).
 
   **Direction A (default — first-wake-model-wins):** the bridge now pins one model per `flow_id` on the first wake and reuses it for every subsequent wake of that flow, regardless of event class. This eliminates mid-flow flips while preserving the `milestone_model` cost optimisation (the cheaper model is used for *all* wakes, not just milestones).
 
-  **Direction B (opt-in — `wakeModelPolicy: "session-primary"`):** set this dep to always use the session's primary model for every wake, including milestones. This provides maximum cache stability by never forwarding `milestone_model` at all, at the cost of the milestone cost-optimisation. Thread `deps.wakeModelPolicy` (optional, default `"first-wake"`) to choose the direction per deployment. Invalid/rejected `milestone_model` values (caught by the existing `invalidMilestoneModelFlows` degradation) are never re-pinned — the pin automatically switches to `undefined` (session primary) after the first rejection. The pin is GC'd on the flow's terminal event; post-terminal frames are still dropped by the existing terminal latch.
+  **Direction B (opt-in — `wakeModelPolicy: "session-primary"`):** set this dep to always use the session's primary model for every wake, including milestones. This provides maximum cache stability by never forwarding `milestone_model` at all, at the cost of the milestone cost-optimisation. Thread `deps.wakeModelPolicy` (optional, default `"first-wake"`) to choose the direction per deployment. Invalid/rejected `milestone_model` values (caught by the existing `invalidMilestoneModelFlows` degradation) are never re-pinned — the pin automatically switches to `undefined` (session primary) after the first rejection. The pin is GC'd on the flow's terminal event; post-terminal frames are still dropped by the existing terminal latch. (#105)
+
+### Fixed
+
+- **Durable per-`flow_id` terminal latch + `finish()` conflict hardening (#101).** Trailing milestone / terminal / `*:started` / `hitl` frames replayed after a flow had already completed (arriving seconds apart, *across stream boundaries* — e.g. after a `langgraph_resume`) could re-wake the session and wedge the lane until a manual gateway restart. The previous per-stream guard (#94) and the SDK-record terminal status both raced these replays. A synchronous, durable per-`flow_id` terminal latch — set the moment a terminal frame is processed, *before* `flows.finish()` — now drops any later frame for that `flow_id` before it can route to a wake, independent of the SDK record's revision/timing. `finish()` revision conflicts are also hardened: the current revision is re-read (numerically normalized) and `finish()` retried once so the terminal state still commits; a persistent failure is swallowed + warned rather than rethrown, since a terminal event has no productive retry and a 500 here is a misleading signal, not a re-delivery trigger (the latch already guarantees replay suppression). (#101, #104)
 
 ## [0.14.1] - 2026-06-26
 
