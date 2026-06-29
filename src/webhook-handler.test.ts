@@ -205,6 +205,48 @@ describe("processEvent — terminal finish() revision-conflict hardening (#101)"
     expect(calls.wake).toHaveBeenCalledOnce();
   });
 
+  it("normalizes a non-numeric reread revision before retrying finish() (string revision -> Number)", () => {
+    const { deps, calls } = makeDeps();
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    deps.logger = logger;
+    // flows.get() is typed Record<string, unknown>; the reread revision can
+    // come back as a string. It must be Number()-normalized identically to
+    // flowRevision, otherwise the equality guard mis-fires and a non-number
+    // expectedRevision is passed into finish(), defeating the hardening.
+    calls.get
+      .mockReturnValueOnce({
+        owner_key: "agent:main:dm:user",
+        revision: 1,
+        status: "running",
+        stateJson: { decision_only: false },
+      })
+      .mockReturnValueOnce({
+        owner_key: "agent:main:dm:user",
+        revision: "2",
+        status: "running",
+        stateJson: { decision_only: false },
+      });
+    calls.finish.mockImplementationOnce(() => {
+      throw new Error("revision conflict: expected 1");
+    });
+
+    const result = processEvent({
+      body: terminalBody,
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    expect(result).toMatchObject({ status: "ok" });
+    expect(calls.finish).toHaveBeenCalledTimes(2);
+    // Retry got a real number 2, not the string "2".
+    const retryRevision = (calls.finish.mock.calls[1]![0] as { expectedRevision: unknown })
+      .expectedRevision;
+    expect(retryRevision).toBe(2);
+    expect(typeof retryRevision).toBe("number");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it("on finish() failure with no fresh revision, swallows + warns instead of 500ing (latch still suppresses replays)", () => {
     const { deps, calls } = makeDeps();
     const logger = { info: vi.fn(), warn: vi.fn() };
@@ -1331,18 +1373,18 @@ describe("processEvent — per-flow terminal latch (issue #101)", () => {
       throw new Error("revision_conflict");
     });
 
-    // The terminal event will throw from finish(); we don't assert on it here
-    // (the test only cares that the latch fires before finish). Wrap to swallow.
-    try {
+    // finish() throws (revision conflict), but production swallows it by
+    // design (#101) to avoid 500/replay storms — so processEvent does NOT
+    // throw. The latch is set synchronously before finish(), so the
+    // subsequent frame is still dropped regardless.
+    expect(() =>
       processEvent({
         body: { kind: "terminal", flow_id: "latch-d", title: "done" },
         sessionKey: "agent:main:dm:user",
         flowRevision: 1,
         deps,
-      });
-    } catch {
-      // finish() threw — expected in this scenario.
-    }
+      }),
+    ).not.toThrow();
 
     // Restore finish so the subsequent frame doesn't also throw.
     calls.finish.mockImplementation(() => undefined);

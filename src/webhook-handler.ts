@@ -381,10 +381,14 @@ export function processEvent(params: {
           endedAt: Date.now(),
         });
       } catch (finishErr) {
-        const reread = flows.get(body.flow_id) as { revision?: number } | undefined;
-        const freshRevision = reread?.revision;
+        const reread = flows.get(body.flow_id) as { revision?: unknown } | undefined;
+        // Normalize identically to flowRevision: flows.get() is typed
+        // Record<string, unknown>, so revision may be a string/non-number.
+        // Without Number() the equality check below is unreliable and a
+        // non-numeric expectedRevision would defeat the conflict hardening.
+        const freshRevision = Number(reread?.revision ?? NaN);
         try {
-          if (freshRevision === undefined || freshRevision === flowRevision) {
+          if (Number.isNaN(freshRevision) || freshRevision === flowRevision) {
             // Revision didn't move (or is unreadable) — a plain retry would
             // hit the same conflict, so don't bother; fall through to swallow.
             throw finishErr;
