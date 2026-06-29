@@ -178,15 +178,49 @@ emit_phase_event(
 
 ## Mode B mapping
 
-The plugin maps phase events to Mode B kinds as follows:
+If a phase event carries **no explicit `kind`**, the plugin's `translatePhaseEventVocabulary`
+fallback derives one from the `event` name alone:
 
-| `event` value | Mode B `kind` | Agent action |
+| `event` value | Fallback `kind` | Agent action |
 |---|---|---|
 | `"started"` | `milestone` | Light wake; agent posts short ack |
 | `"finished"` | `milestone` | Light wake; agent posts outcome |
 | `"failed"` | `terminal` | Full wake; agent posts error summary |
 
 Other `event` values (e.g. `"progress"`) map to `status` (no agent wake by default).
+
+## Set an explicit `kind` (recommended)
+
+> **The fallback is coarse.** It promotes **both** `started` and `finished` to `milestone`.
+> With `decision_only=false` that means *every* phase echo wakes the agent — including each
+> `:started` from parallel nodes (e.g. three reviewers running concurrently) — which floods
+> the thread with low-signal wakes (a "wake-storm").
+
+The plugin honors an explicit `kind` field on the phase payload and passes it through
+verbatim, overriding the `event`-name fallback. Valid values: `status`, `milestone`,
+`terminal`, `decision`, `hitl`.
+
+```python
+emit_phase_event(
+    "reviewer", "started",
+    ticket_id=state["ticket_id"],
+    summary="reviewing diff",
+    kind="status",          # announcement only — never wakes
+)
+```
+
+Recommended derivation for an `emit_phase_event` wrapper:
+
+| Condition | `kind` to set | Rationale |
+|---|---|---|
+| `started` | `status` | Announcement only; should never wake the agent |
+| `finished` **with** `verdict` or `details.terminal` | `milestone` | Carries a real outcome worth a wake |
+| `finished` bare (no outcome) | `status` | "phase done" echo is noise |
+| `failed` | *unset* | Let the fallback classify as `terminal(failed)`. Do **not** force `terminal` — it calls `flows.finish()`, but a mid-graph node failure only re-raises |
+| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` | A human-gate decision carries no verdict; force a wake so the agent surfaces it |
+
+This cut a typical sdlc-feature run from ~20 wake frames to ~7 signal frames, correct
+regardless of `decision_only`. See `devops-langgraph#29` for the graph-side implementation.
 
 ---
 

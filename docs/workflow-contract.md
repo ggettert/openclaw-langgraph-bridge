@@ -186,11 +186,42 @@ writer({
 
 ### Mode B mapping
 
-| `event` | Plugin kind | Agent action |
+When a phase event carries **no explicit `kind`**, the plugin synthesizes one from the `event` name alone:
+
+| `event` | Fallback kind | Agent action |
 |---|---|---|
 | `"started"` | `milestone` | Light wake (unless `decision_only=true`) |
 | `"finished"` | `milestone` | Light wake (unless `decision_only=true`) |
 | `"failed"` | `terminal` | Full wake |
+
+> **⚠️ Set an explicit `kind` — don't rely on this fallback for chatty graphs.** The heuristic blanket-promotes **both** `started` and `finished` to `milestone`. Under `decision_only=false`, every phase echo then wakes the agent — including each `:started` from parallel nodes (e.g. three reviewers) — which produces a wake-storm / thread spam. The plugin honors an explicit `kind` field on the phase payload (`status` | `milestone` | `terminal` | `decision` | `hitl`) and passes it through verbatim, overriding the fallback. See [Tagging phase events with an explicit `kind`](#tagging-phase-events-with-an-explicit-kind) below.
+
+### Tagging phase events with an explicit `kind`
+
+Add a `kind` field to the phase payload to route precisely instead of leaning on the `started`/`finished` heuristic:
+
+```python
+writer({
+    "schema_version": 1,
+    "phase": "reviewer",
+    "event": "started",
+    "ticket_id": "BINGO-42",
+    "summary": "reviewing diff",
+    "kind": "status",          # never wakes — just an announcement
+})
+```
+
+Recommended derivation (the one `emit_phase_event` wrappers should encode):
+
+| Condition | `kind` | Why |
+|---|---|---|
+| `started` | `status` | Announcement only — should never wake the agent |
+| `finished` **with** a `verdict` or `details.terminal` | `milestone` | Carries a real outcome worth a wake |
+| `finished` bare (no outcome) | `status` | "phase done" echo is noise |
+| `failed` | *unset* | Leave `kind` off and let the fallback classify it as `terminal(failed)`. Do **not** force `terminal` — that triggers `flows.finish()`, but a mid-graph node failure only re-raises |
+| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` | A human-gate decision carries no verdict, so force a wake so the agent surfaces it |
+
+Net effect on a typical sdlc-feature run: ~20 wake frames → ~7 signal frames, and the result is correct regardless of `decision_only`. (Ref: graph-side fix in `devops-langgraph#29`.)
 
 For detailed phase event docs, worked examples, and the full optional field list, see [`docs/phase-event-contract.md`](./phase-event-contract.md).
 
