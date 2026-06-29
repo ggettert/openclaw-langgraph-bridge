@@ -9,6 +9,14 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+### Added
+
+- **Per-flow wake-model pin to stop sonnet↔opus cache thrash (#101 ask #4).** Previously, the wake model was chosen per event-class: milestone wakes used `milestone_model` (e.g. `sonnet-4-6`) while decision / HITL / terminal wakes fell back to the session primary (e.g. `opus-4-8`). Across a single flow this caused the model to flip on nearly every wake, invalidating the Anthropic prompt cache and driving memory pressure (real incident 2026-06-29, flow `c92b1f92`, RSS ~1.68 GB).
+
+  **Direction A (default — first-wake-model-wins):** the bridge now pins one model per `flow_id` on the first wake and reuses it for every subsequent wake of that flow, regardless of event class. This eliminates mid-flow flips while preserving the `milestone_model` cost optimisation (the cheaper model is used for *all* wakes, not just milestones).
+
+  **Direction B (opt-in — `wakeModelPolicy: "session-primary"`):** set this dep to always use the session's primary model for every wake, including milestones. This provides maximum cache stability by never forwarding `milestone_model` at all, at the cost of the milestone cost-optimisation. Thread `deps.wakeModelPolicy` (optional, default `"first-wake"`) to choose the direction per deployment. Invalid/rejected `milestone_model` values (caught by the existing `invalidMilestoneModelFlows` degradation) are never re-pinned — the pin automatically switches to `undefined` (session primary) after the first rejection. The pin is GC'd on the flow's terminal event; post-terminal frames are still dropped by the existing terminal latch.
+
 ## [0.14.1] - 2026-06-26
 
 ### Fixed
