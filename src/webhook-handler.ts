@@ -295,8 +295,12 @@ export function processEvent(params: {
   //     `inspect`->`resume` to double-fire `langgraph_resume` into an
   //     already-completed flow (#16).
   //   - `finish` on an already-finished flow throws a revision
-  //     conflict, propagates up to a 500 in `buildHandler`, which
-  //     LangGraph treats as retryable (#10).
+  //     conflict, propagating up to a 500 in `buildHandler` (#10).
+  //     A 500 here is a misleading error signal for a flow that's
+  //     actually done — NOT a re-delivery trigger: LangGraph's native
+  //     webhook is terminal-only/single-shot with no 5xx retry, and the
+  //     devops-langgraph workflow emits frames via the SSE stream writer
+  //     (stream_mode=custom), not webhook POSTs.
   //   - `runTask` for status/milestone after terminal records spurious
   //     post-terminal task progress entries, which mislead an operator
   //     reading flow history.
@@ -368,11 +372,16 @@ export function processEvent(params: {
       //   1. Re-read the current revision and retry finish() once, so the
       //      terminal state still COMMITS despite the race.
       //   2. If it still fails, swallow + warn rather than rethrow. A terminal
-      //      event has no productive retry (the flow is done), and letting it
-      //      propagate 500s the webhook -> LangGraph re-delivers -> feeds the
-      //      post-terminal replay storm this issue is about. The terminal latch
-      //      already guarantees replay suppression regardless of whether the
-      //      SDK status committed.
+      //      event has no productive retry (the flow is done), so a 500 here is
+      //      just a misleading error signal, not a re-delivery trigger.
+      //      (Verified against the LangGraph webhook docs + devops-langgraph
+      //      graph/workflow.py: the native webhook is terminal-only/single-shot
+      //      with no 5xx retry, and the workflow emits frames over the SSE
+      //      stream writer, never webhook POSTs — so nothing re-delivers on a
+      //      500.) The post-terminal replay storm this issue is about comes from
+      //      LangGraph's stream_mode buffer flush after graph:end; the
+      //      synchronous latch already guarantees replay suppression regardless
+      //      of whether the SDK status committed.
       try {
         flows.finish({
           flowId: body.flow_id,
@@ -404,7 +413,7 @@ export function processEvent(params: {
           );
         } catch (retryErr) {
           deps.logger?.warn?.(
-            `langgraph-bridge: terminal finish() failed for flow=${body.flow_id} — swallowed to avoid a 500/replay-retry storm (latch still suppresses replays): ${
+            `langgraph-bridge: terminal finish() failed for flow=${body.flow_id} — swallowed (terminal events have no productive retry; a 500 here is a misleading signal, not a re-delivery trigger; latch suppresses the stream-replay frames): ${
               (retryErr as Error)?.message ?? String(retryErr)
             }`,
           );
