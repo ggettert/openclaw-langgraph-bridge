@@ -198,7 +198,7 @@ When a phase event carries **no explicit `kind`**, the plugin synthesizes one fr
 
 ### Tagging phase events with an explicit `kind`
 
-Add a `kind` field to the phase payload to route precisely instead of leaning on the `started`/`finished` heuristic:
+Add a `kind` field to the phase payload to route precisely instead of leaning on the `started`/`finished` heuristic. **Set `title` too** — see the caveat below:
 
 ```python
 writer({
@@ -207,19 +207,22 @@ writer({
     "event": "started",
     "ticket_id": "BINGO-42",
     "summary": "reviewing diff",
-    "kind": "status",          # never wakes — just an announcement
+    "kind": "status",                 # never wakes — just an announcement
+    "title": "reviewer:started",      # preserve phase:event context (see caveat)
 })
 ```
 
-Recommended derivation (the one `emit_phase_event` wrappers should encode):
+> **⚠️ When you set `kind`, also set `title`.** The plugin checks `kind` **first** (the explicit Mode B path) and **does not** run the phase→title mapping, so it defaults `title` to `custom:<kind>` when you omit it. Without an explicit `title`, every milestone collapses to `custom:milestone`, every announcement to `custom:status`, etc. — flow history and wake titles lose the `phase:event` context. Set `title` to `f"{phase}:{event}"` (the value the fallback would have produced). `summary` is preserved either way when present.
+
+Recommended derivation (the one `emit_phase_event` wrappers should encode — and they should also pass `title=f"{phase}:{event}"`):
 
 | Condition | `kind` | Why |
 |---|---|---|
 | `started` | `status` | Announcement only — should never wake the agent |
 | `finished` **with** a `verdict` or `details.terminal` | `milestone` | Carries a real outcome worth a wake |
 | `finished` bare (no outcome) | `status` | "phase done" echo is noise |
-| `failed` | *unset* | Leave `kind` off and let the fallback classify it as `terminal(failed)`. Do **not** force `terminal` — that triggers `flows.finish()`, but a mid-graph node failure only re-raises |
-| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` | A human-gate decision carries no verdict, so force a wake so the agent surfaces it |
+| `failed` | *unset* | Leave `kind` off so the payload takes the phase-event path, which yields `terminal` **and** a `phase:failed` title. Setting `kind="terminal"` reaches the same terminal/`flows.finish()` outcome but collapses the title to `custom:terminal` unless you also set `title`. Omitting `kind` does **not** change whether the flow finishes — `failed` is terminal either way — it just keeps the better title for free |
+| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` (+ `title`) | A human-gate decision carries no verdict, so force a wake so the agent surfaces it |
 
 Net effect on a typical sdlc-feature run: ~20 wake frames → ~7 signal frames, and the result is correct regardless of `decision_only`. (Ref: graph-side fix in `devops-langgraph#29`.)
 

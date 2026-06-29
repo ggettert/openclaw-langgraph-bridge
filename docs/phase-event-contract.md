@@ -205,19 +205,28 @@ emit_phase_event(
     "reviewer", "started",
     ticket_id=state["ticket_id"],
     summary="reviewing diff",
-    kind="status",          # announcement only — never wakes
+    kind="status",                 # announcement only — never wakes
+    title="reviewer:started",      # preserve phase:event context (see caveat)
 )
 ```
 
-Recommended derivation for an `emit_phase_event` wrapper:
+> **⚠️ When you set `kind`, also set `title`.** A payload with `kind` takes the explicit
+> Mode B path, which is checked **before** `translatePhaseEventVocabulary` and therefore
+> skips the phase→title mapping. The plugin then defaults `title` to `custom:<kind>` when
+> it's omitted, collapsing many distinct phases into the same wake title (`custom:milestone`,
+> `custom:status`, …) and degrading flow history. Pass `title=f"{phase}:{event}"` to keep the
+> context. `summary` is preserved either way when present.
+
+Recommended derivation for an `emit_phase_event` wrapper (which should also set
+`title=f"{phase}:{event}"` whenever it sets `kind`):
 
 | Condition | `kind` to set | Rationale |
 |---|---|---|
 | `started` | `status` | Announcement only; should never wake the agent |
 | `finished` **with** `verdict` or `details.terminal` | `milestone` | Carries a real outcome worth a wake |
 | `finished` bare (no outcome) | `status` | "phase done" echo is noise |
-| `failed` | *unset* | Let the fallback classify as `terminal(failed)`. Do **not** force `terminal` — it calls `flows.finish()`, but a mid-graph node failure only re-raises |
-| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` | A human-gate decision carries no verdict; force a wake so the agent surfaces it |
+| `failed` | *unset* | Leaving `kind` off takes the phase-event path, which yields `terminal` **and** a `phase:failed` title. Setting `kind="terminal"` reaches the same terminal/`flows.finish()` outcome but collapses the title to `custom:terminal` unless you also set `title`. Omitting `kind` does **not** change whether the flow finishes — `failed` is terminal either way — it just preserves the better title |
+| gate/decision frame with no verdict (e.g. `merge_gate`) | `milestone` (+ `title`) | A human-gate decision carries no verdict; force a wake so the agent surfaces it |
 
 This cut a typical sdlc-feature run from ~20 wake frames to ~7 signal frames, correct
 regardless of `decision_only`. See `devops-langgraph#29` for the graph-side implementation.
