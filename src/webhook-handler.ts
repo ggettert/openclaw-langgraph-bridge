@@ -75,8 +75,9 @@ const MAX_FLOW_WAKE_MODELS = 10_000;
  *
  * `undefined` is a valid pinned value meaning "use the session primary" (i.e.
  * the natural model for a flow whose first wake had no milestone_model override).
- * We use a sentinel to distinguish "seen but primary" from "not yet seen":
- * `flowWakeModelSeen` tracks which flow_ids have been pinned.
+ * Because `undefined` is itself a stored value, Map *presence* is the sentinel:
+ * `flowWakeModel.has(flowId)` distinguishes "seen, pinned to primary" from "not
+ * yet seen". No separate sentinel set is needed.
  *
  * Process-local; bounded with FIFO eviction identical to terminatedFlows.
  * GC'd on terminal (after the terminal wake fires) so the map stays small.
@@ -233,8 +234,10 @@ export type WebhookHandlerDeps = {
    * maximises cache stability at the cost of the milestone cost-saving
    * optimisation (cheaper sonnet turns for low-stakes milestone reports).
    *
-   * The default is "first-wake". Pass "session-primary" to revert to the
-   * simpler pre-pin behaviour while still benefiting from cache stability.
+   * The default is "first-wake". Note "session-primary" is NOT the old pre-pin
+   * behaviour: pre-pin still forwarded `milestone_model` for milestone wakes,
+   * whereas "session-primary" is stricter — it ignores `milestone_model` for
+   * every event class and always uses the session primary.
    */
   wakeModelPolicy?: "first-wake" | "session-primary";
   logger?: {

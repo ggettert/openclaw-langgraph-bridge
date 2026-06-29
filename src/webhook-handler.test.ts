@@ -1746,10 +1746,10 @@ describe("processEvent — per-flow wake-model pin (#101 ask #4)", () => {
     expect(typeof onInvalidModel).toBe("function");
     onInvalidModel?.({ model: "bad-model", cliError: "is not allowed" });
 
-    // Second milestone: natural model now undefined (bad-model rejected).
-    // The pin was NOT set on the first wake (first wake used bad-model but pin
-    // is set from naturalModel; after invalidation naturalModel becomes undefined
-    // for subsequent wakes). Verify the second wake uses undefined.
+    // Second milestone: the first wake DID pin `bad-model` (it was the natural
+    // model at that time). After onInvalidModel marks the flow invalid, the
+    // stale pin is detected as rejected, cleared, and re-pinned from the now-
+    // undefined naturalModel — so the second wake uses undefined (session primary).
     processEvent({
       body: { kind: "milestone", flow_id: "pin-rejected", title: "b" },
       sessionKey: "agent:main:dm:user",
