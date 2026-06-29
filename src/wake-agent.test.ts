@@ -223,6 +223,51 @@ describe("wakeAgentAsync", () => {
       expect(logger.warn).toHaveBeenCalled();
     });
 
+    it("invalid-model retry PRESERVES --thinking (only --model is dropped) — issue #100 regression", async () => {
+      // A milestone wake sets BOTH model=milestone_model and thinking=off.
+      // If the model is rejected, the retry must keep --thinking off, else
+      // the fallback turn regains reasoning and reintroduces the
+      // reasoning-only retry churn #100 was meant to suppress.
+      const calls: Array<{ file: string; args: readonly string[] }> = [];
+      const fn: ExecFileLike = (file, args, _options, cb) => {
+        calls.push({ file, args });
+        if (calls.length === 1) {
+          const stderr =
+            'GatewayClientRequestError: Error: Model override "bad/model" is not allowed for agent "main".';
+          queueMicrotask(() => cb(new Error(stderr), "", stderr));
+        } else {
+          queueMicrotask(() => cb(null, "", ""));
+        }
+        return undefined;
+      };
+      const onInvalidModel = vi.fn<(p: { model: string; cliError: string }) => void>();
+
+      await expect(
+        wakeAgentAsync(
+          {
+            agentId: "main",
+            sessionKey: "s",
+            message: "m",
+            model: "bad/model",
+            thinking: "off",
+          },
+          { execFile: fn as never, logger: makeLogger(), onInvalidModel },
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(calls).toHaveLength(2);
+      // First call: had both --model and --thinking.
+      expect(calls[0]!.args).toContain("--model");
+      const firstThinkingIdx = calls[0]!.args.indexOf("--thinking");
+      expect(firstThinkingIdx).toBeGreaterThan(-1);
+      expect(calls[0]!.args[firstThinkingIdx + 1]).toBe("off");
+      // Retry: --model dropped, --thinking off PRESERVED.
+      expect(calls[1]!.args).not.toContain("--model");
+      const retryThinkingIdx = calls[1]!.args.indexOf("--thinking");
+      expect(retryThinkingIdx).toBeGreaterThan(-1);
+      expect(calls[1]!.args[retryThinkingIdx + 1]).toBe("off");
+    });
+
     it("if retry without --model also fails, rejects with the retry's error", async () => {
       const calls: Array<{ args: readonly string[] }> = [];
       const fn: ExecFileLike = (_file, args, _options, cb) => {
@@ -348,6 +393,52 @@ describe("wakeAgentAsync", () => {
       expect(modelIdx).toBeGreaterThan(-1);
       // Trimmed value forwarded to CLI — no whitespace.
       expect(args[modelIdx + 1]).toBe("anthropic/claude-sonnet-4-6");
+    });
+  });
+
+  describe("--thinking override (issue #100)", () => {
+    it("thinking: 'off' appends --thinking off to args", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "off" },
+        { execFile: fn as never },
+      );
+      const thinkingIdx = calls[0]!.args.indexOf("--thinking");
+      expect(thinkingIdx).toBeGreaterThan(-1);
+      expect(calls[0]!.args[thinkingIdx + 1]).toBe("off");
+    });
+
+    it("thinking: 'minimal' passes through as-is", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "minimal" },
+        { execFile: fn as never },
+      );
+      const thinkingIdx = calls[0]!.args.indexOf("--thinking");
+      expect(thinkingIdx).toBeGreaterThan(-1);
+      expect(calls[0]!.args[thinkingIdx + 1]).toBe("minimal");
+    });
+
+    it("whitespace-only thinking is treated as unset — no --thinking flag emitted", async () => {
+      const { fn, calls } = makeExecFile();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "   " },
+        { execFile: fn as never },
+      );
+      expect(calls[0]!.args).not.toContain("--thinking");
+    });
+
+    it("invalid thinking level 'ultra' is dropped with a warn — no --thinking flag emitted", async () => {
+      const { fn, calls } = makeExecFile();
+      const logger = makeLogger();
+      await wakeAgentAsync(
+        { agentId: "main", sessionKey: "s", message: "m", thinking: "ultra" },
+        { execFile: fn as never, logger },
+      );
+      expect(calls[0]!.args).not.toContain("--thinking");
+      expect(logger.warn).toHaveBeenCalledOnce();
+      expect(logger.warn.mock.calls[0]![0]).toMatch(/ultra/);
+      expect(logger.warn.mock.calls[0]![0]).toMatch(/off\|minimal\|low\|medium\|high/);
     });
   });
 });

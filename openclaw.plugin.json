@@ -87,6 +87,32 @@
             "maximum": 300000
           }
         }
+      },
+      "wakeThinking": {
+        "type": "object",
+        "description": "Per-event-class thinking level for proactive wakes (issue #100). milestone defaults to 'off' to stop reasoning-only retry churn; decision/hitl/terminal inherit the session level unless set.",
+        "properties": {
+          "milestone": {
+            "type": "string",
+            "description": "Thinking level for milestone-event wakes. Default 'off' — suppresses reasoning-only agent turns that the openclaw runtime retries.",
+            "pattern": "^(off|minimal|low|medium|high)$"
+          },
+          "decision": {
+            "type": "string",
+            "description": "Thinking level for decision-event wakes. When unset, inherits the session's configured reasoning level.",
+            "pattern": "^(off|minimal|low|medium|high)$"
+          },
+          "hitl": {
+            "type": "string",
+            "description": "Thinking level for hitl-event wakes. When unset, inherits the session's configured reasoning level.",
+            "pattern": "^(off|minimal|low|medium|high)$"
+          },
+          "terminal": {
+            "type": "string",
+            "description": "Thinking level for terminal-event wakes. When unset, inherits the session's configured reasoning level.",
+            "pattern": "^(off|minimal|low|medium|high)$"
+          }
+        }
       }
     }
   },

@@ -179,6 +179,49 @@ export const ConfigSchema = Type.Object({
       },
     ),
   ),
+  wakeThinking: Type.Optional(
+    Type.Object(
+      {
+        milestone: Type.Optional(
+          Type.String({
+            description:
+              'Thinking level for milestone-event wakes. Default "off" — suppresses reasoning-only agent turns that the openclaw runtime retries (issue #100 / queue-backup noise).',
+            pattern: "^(off|minimal|low|medium|high)$",
+            default: "off",
+            examples: ["off"],
+          }),
+        ),
+        decision: Type.Optional(
+          Type.String({
+            description:
+              "Thinking level for decision-event wakes. When unset, inherits the session\u2019s configured reasoning level.",
+            pattern: "^(off|minimal|low|medium|high)$",
+            examples: ["medium"],
+          }),
+        ),
+        hitl: Type.Optional(
+          Type.String({
+            description:
+              "Thinking level for hitl-event wakes. When unset, inherits the session\u2019s configured reasoning level.",
+            pattern: "^(off|minimal|low|medium|high)$",
+            examples: ["medium"],
+          }),
+        ),
+        terminal: Type.Optional(
+          Type.String({
+            description:
+              "Thinking level for terminal-event wakes. When unset, inherits the session\u2019s configured reasoning level.",
+            pattern: "^(off|minimal|low|medium|high)$",
+            examples: ["medium"],
+          }),
+        ),
+      },
+      {
+        description:
+          'Per-event-class thinking level for proactive wakes (issue #100). milestone defaults to "off" to stop reasoning-only retry churn; decision/hitl/terminal inherit the session level unless set.',
+      },
+    ),
+  ),
 });
 
 type PluginConfig = Static<typeof ConfigSchema>;
@@ -260,6 +303,17 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
         enabled: config.dedup?.enabled ?? true,
         windowMs: config.dedup?.windowMs ?? 5_000,
       }),
+      // Per-event-class thinking level for proactive wakes (issue #100).
+      // milestone hard-defaults to "off" here (JSON Schema `default` is
+      // non-normative; the bridge enforces the default explicitly).
+      // decision / hitl / terminal are passed through as-is: undefined
+      // means "inherit the session's reasoning level".
+      wakeThinking: {
+        milestone: config.wakeThinking?.milestone ?? "off",
+        decision: config.wakeThinking?.decision,
+        hitl: config.wakeThinking?.hitl,
+        terminal: config.wakeThinking?.terminal,
+      },
     };
 
     // Concurrent-resume guard (#9): prevents TOCTOU race between status check
