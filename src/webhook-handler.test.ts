@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetInvalidMilestoneModelFlowsForTest,
+  __resetTerminatedFlowsForTest,
   processEvent,
   type WebhookHandlerDeps,
 } from "./webhook-handler.js";
 import { makeFakeDeps } from "./test-harness.js";
 import type { WakeAgentParams } from "./wake-agent.js";
+
+// Reset the terminal latch before every test so module-level state from a
+// terminal-kind processEvent call (e.g. processEvent — terminal describe) does
+// not bleed into later describes that reuse the same flow_id.
+beforeEach(() => {
+  __resetTerminatedFlowsForTest();
+});
 
 // Alias to preserve existing test call sites unchanged.
 const makeDeps = () => makeFakeDeps({ decisionOnly: false });
@@ -142,6 +150,118 @@ describe("processEvent — terminal", () => {
     expect(calls.wake).toHaveBeenCalledOnce();
     const wakeArgs = calls.wake.mock.calls[0]![0];
     expect(wakeArgs.message).toMatch(/\[langgraph:terminal\] ok/);
+  });
+});
+
+describe("processEvent — terminal finish() revision-conflict hardening (#101)", () => {
+  const terminalBody = {
+    kind: "terminal" as const,
+    flow_id: "f1",
+    title: "ok",
+    summary: "deploy succeeded",
+    data: { exit_code: 0 },
+  };
+
+  it("on finish() revision conflict, re-reads the revision and retries finish() so terminal state still commits", () => {
+    const { deps, calls } = makeDeps();
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    deps.logger = logger;
+    // Top read: revision 1 (non-terminal). Reread in catch: revision 2 (a
+    // concurrent milestone runTask bumped it). finish() throws on the first
+    // call (stale expectedRevision), succeeds on the revision-refreshed retry.
+    calls.get
+      .mockReturnValueOnce({
+        owner_key: "agent:main:dm:user",
+        revision: 1,
+        status: "running",
+        stateJson: { decision_only: false },
+      })
+      .mockReturnValueOnce({
+        owner_key: "agent:main:dm:user",
+        revision: 2,
+        status: "running",
+        stateJson: { decision_only: false },
+      });
+    calls.finish.mockImplementationOnce(() => {
+      throw new Error("revision conflict: expected 1");
+    });
+
+    const result = processEvent({
+      body: terminalBody,
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    // Did not throw / 500 — returned ok.
+    expect(result).toMatchObject({ status: "ok" });
+    // finish() called twice; the retry used the refreshed revision.
+    expect(calls.finish).toHaveBeenCalledTimes(2);
+    expect((calls.finish.mock.calls[1]![0] as { expectedRevision: number }).expectedRevision).toBe(
+      2,
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+    // Terminal still wakes once.
+    expect(calls.wake).toHaveBeenCalledOnce();
+  });
+
+  it("on finish() failure with no fresh revision, swallows + warns instead of 500ing (latch still suppresses replays)", () => {
+    const { deps, calls } = makeDeps();
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    deps.logger = logger;
+    // Revision does not move between top read and reread (1 -> 1), so a plain
+    // retry would hit the same conflict — swallow rather than rethrow.
+    calls.get.mockReturnValue({
+      owner_key: "agent:main:dm:user",
+      revision: 1,
+      status: "running",
+      stateJson: { decision_only: false },
+    });
+    calls.finish.mockImplementation(() => {
+      throw new Error("revision conflict: expected 1");
+    });
+
+    const result = processEvent({
+      body: terminalBody,
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    // Swallowed: returns ok (no 500 -> no LangGraph re-delivery storm).
+    expect(result).toMatchObject({ status: "ok" });
+    // No revision-refresh retry attempted (revision unchanged).
+    expect(calls.finish).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn.mock.calls[0]![0]).toMatch(/terminal finish\(\) failed/);
+  });
+
+  it("latch is still set when finish() fails — the next frame for the flow is dropped", () => {
+    const { deps, calls } = makeDeps();
+    deps.logger = { info: vi.fn(), warn: vi.fn() };
+    calls.get.mockReturnValue({
+      owner_key: "agent:main:dm:user",
+      revision: 1,
+      status: "running",
+      stateJson: { decision_only: false },
+    });
+    calls.finish.mockImplementation(() => {
+      throw new Error("revision conflict");
+    });
+
+    processEvent({ body: terminalBody, sessionKey: "agent:main:dm:user", flowRevision: 1, deps });
+    const wakeCallsAfterTerminal = calls.wake.mock.calls.length;
+
+    // A replayed milestone for the same flow after the (failed-finish) terminal
+    // must be dropped by the latch, despite the SDK status never committing.
+    const result = processEvent({
+      body: { kind: "milestone", flow_id: "f1", title: "merge_gate:started", summary: "" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(result).toMatchObject({ action: "ignored:post-terminal" });
+    expect(calls.wake.mock.calls.length).toBe(wakeCallsAfterTerminal);
   });
 });
 
@@ -956,7 +1076,15 @@ describe("processEvent — milestone_model dispatch param (#83)", () => {
     expect(calls.wake.mock.calls[1]![0].model).toBe("bad-model");
   });
 
-  it("terminal event GCs the per-flow rejection cache entry", () => {
+  it("terminal event GCs the per-flow rejection cache entry (post-terminal frame dropped by latch)", () => {
+    // Note (issue #101): the invalidMilestoneModelFlows GC still runs at
+    // terminal (the delete call in the code is unchanged), but with the
+    // per-flow terminal latch any post-terminal milestone for the same
+    // flow_id is dropped before reaching the model-forwarding path, so
+    // the GC is no longer directly observable through processEvent.
+    // This test confirms: (a) the terminal fires finish+wake normally,
+    // (b) a post-terminal milestone for the same flow is dropped by the
+    // latch (not by the invalidMilestoneModelFlows cache).
     const { deps, calls } = makeFakeDeps({
       decisionOnly: false,
       flowRecord: {
@@ -964,7 +1092,7 @@ describe("processEvent — milestone_model dispatch param (#83)", () => {
       },
     });
 
-    // Reject for flow.
+    // First milestone + simulate model rejection.
     processEvent({
       body: { kind: "milestone", flow_id: "flow-gc", title: "a" },
       sessionKey: "agent:main:dm:user",
@@ -976,29 +1104,27 @@ describe("processEvent — milestone_model dispatch param (#83)", () => {
       cliError: "is not allowed",
     });
 
-    // Terminal arrives for same flow.
+    // Terminal arrives for same flow — latches it and fires finish+wake.
     processEvent({
       body: { kind: "terminal", flow_id: "flow-gc", title: "done" },
       sessionKey: "agent:main:dm:user",
       flowRevision: 1,
       deps,
     });
+    expect(calls.finish).toHaveBeenCalledOnce();
+    // Two wake calls so far: first milestone + terminal.
+    expect(calls.wake).toHaveBeenCalledTimes(2);
 
-    // A new milestone for the SAME flow id after terminal would now NOT
-    // be suppressed (cache was cleared by terminal). In real life flow
-    // ids are unique per run, but the GC is observable here.
-    processEvent({
+    // Post-terminal milestone for the same flow — latch drops it.
+    const result = processEvent({
       body: { kind: "milestone", flow_id: "flow-gc", title: "x" },
       sessionKey: "agent:main:dm:user",
       flowRevision: 1,
       deps,
     });
-    // calls[0] = first milestone, calls[1] = terminal wake, calls[2] = second milestone
-    const secondMilestone = calls.wake.mock.calls.find(
-      (c, idx) => idx > 0 && c[0].message.includes("[langgraph:milestone]"),
-    );
-    expect(secondMilestone).toBeDefined();
-    expect(secondMilestone![0].model).toBe("bad-model");
+    expect(result).toEqual({ status: "ok", action: "ignored:post-terminal" });
+    // No additional wake beyond the two above.
+    expect(calls.wake).toHaveBeenCalledTimes(2);
   });
 
   it("decision_only=true suppresses milestone wakes BEFORE model is ever considered", () => {
@@ -1094,5 +1220,174 @@ describe("processEvent — wakeThinking per-event-class (issue #100)", () => {
     });
     expect(calls.wake).toHaveBeenCalledOnce();
     expect(calls.wake.mock.calls[0]![0].thinking).toBeUndefined();
+  });
+});
+
+describe("processEvent — per-flow terminal latch (issue #101)", () => {
+  beforeEach(() => {
+    __resetInvalidMilestoneModelFlowsForTest();
+    __resetTerminatedFlowsForTest();
+  });
+
+  it("(a) latch drops post-terminal milestone even when SDK status is still non-terminal", () => {
+    // Simulates the finish()-revision-conflict scenario: the flow's SDK
+    // record status remains "running" (non-terminal) but the latch should
+    // drop the subsequent milestone frame regardless.
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { status: "running" },
+    });
+
+    // First: process a terminal event — latches flow F internally.
+    processEvent({
+      body: { kind: "terminal", flow_id: "latch-f", title: "done" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    // Reset wake call count so we can assert cleanly on the milestone.
+    calls.wake.mockClear();
+    calls.runTask.mockClear();
+
+    // Now: process a milestone for the same flow. The mocked get() still
+    // returns status="running" (non-terminal), but the latch should catch it.
+    const result = processEvent({
+      body: { kind: "milestone", flow_id: "latch-f", title: "node:recap", summary: "late" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    expect(result).toEqual({ status: "ok", action: "ignored:post-terminal" });
+    expect(calls.runTask).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
+
+  it("(b) replayed terminal after first terminal: second terminal ignored, wake called only once", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { status: "running" },
+    });
+
+    // First terminal — should succeed and wake.
+    processEvent({
+      body: { kind: "terminal", flow_id: "latch-b", title: "done" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    expect(calls.wake).toHaveBeenCalledOnce();
+
+    // Second terminal for same flow — latch drops it.
+    const result = processEvent({
+      body: { kind: "terminal", flow_id: "latch-b", title: "done-replay" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    expect(result).toEqual({ status: "ok", action: "ignored:post-terminal" });
+    // Wake was called only once total (from the first terminal).
+    expect(calls.wake).toHaveBeenCalledOnce();
+    expect(calls.finish).toHaveBeenCalledOnce();
+  });
+
+  it("(c) post-terminal hitl frame is dropped by latch", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { status: "running" },
+    });
+
+    processEvent({
+      body: { kind: "terminal", flow_id: "latch-c", title: "done" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    calls.wake.mockClear();
+    calls.setWaiting.mockClear();
+
+    const result = processEvent({
+      body: { kind: "hitl", flow_id: "latch-c", title: "stale-interrupt", interrupt_id: "i-99" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    expect(result).toEqual({ status: "ok", action: "ignored:post-terminal" });
+    expect(calls.setWaiting).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
+
+  it("(d) latch set even if finish() throws — subsequent frame still dropped", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { status: "running" },
+    });
+
+    // Make finish() throw to simulate a revision conflict.
+    calls.finish.mockImplementation(() => {
+      throw new Error("revision_conflict");
+    });
+
+    // The terminal event will throw from finish(); we don't assert on it here
+    // (the test only cares that the latch fires before finish). Wrap to swallow.
+    try {
+      processEvent({
+        body: { kind: "terminal", flow_id: "latch-d", title: "done" },
+        sessionKey: "agent:main:dm:user",
+        flowRevision: 1,
+        deps,
+      });
+    } catch {
+      // finish() threw — expected in this scenario.
+    }
+
+    // Restore finish so the subsequent frame doesn't also throw.
+    calls.finish.mockImplementation(() => undefined);
+    calls.wake.mockClear();
+    calls.runTask.mockClear();
+
+    // Subsequent frame for same flow should be dropped by the latch.
+    const result = processEvent({
+      body: { kind: "milestone", flow_id: "latch-d", title: "node:recap" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    expect(result).toEqual({ status: "ok", action: "ignored:post-terminal" });
+    expect(calls.runTask).not.toHaveBeenCalled();
+    expect(calls.wake).not.toHaveBeenCalled();
+  });
+
+  it("(e) cross-flow isolation: terminal for F does not drop frames for G", () => {
+    const { deps, calls } = makeFakeDeps({
+      decisionOnly: false,
+      flowRecord: { status: "running" },
+    });
+
+    // Terminate flow F.
+    processEvent({
+      body: { kind: "terminal", flow_id: "latch-F", title: "done" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+    calls.wake.mockClear();
+    calls.runTask.mockClear();
+
+    // A milestone for a DIFFERENT flow G should process normally.
+    const result = processEvent({
+      body: { kind: "milestone", flow_id: "latch-G", title: "node:ok" },
+      sessionKey: "agent:main:dm:user",
+      flowRevision: 1,
+      deps,
+    });
+
+    expect(result).toEqual({ status: "ok", action: "wake-light" });
+    expect(calls.runTask).toHaveBeenCalledOnce();
+    expect(calls.wake).toHaveBeenCalledOnce();
   });
 });

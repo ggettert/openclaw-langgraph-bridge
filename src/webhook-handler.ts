@@ -63,6 +63,33 @@ export function __resetInvalidMilestoneModelFlowsForTest(): void {
   invalidMilestoneModelFlows.clear();
 }
 
+const MAX_TERMINATED_FLOWS = 10_000;
+/**
+ * Durable per-flow_id terminal latch (issue #101).
+ *
+ * Set synchronously the moment a terminal-kind event is processed, BEFORE
+ * flows.finish() (which can throw a revision conflict mid-storm and leave the
+ * SDK status non-terminal). processEvent checks this in addition to the SDK
+ * record status, so once a flow emits a terminal frame, ALL later frames for
+ * that flow_id are dropped before routing to a wake, regardless of finish()'s
+ * outcome. Process-local; across a bridge restart the SDK status still catches
+ * replays, so the latch only covers the in-process TOCTOU window. Bounded with
+ * FIFO eviction (insertion-order) since replays arrive within minutes.
+ */
+const terminatedFlows = new Set<string>();
+function latchTerminated(flowId: string): void {
+  if (terminatedFlows.has(flowId)) return;
+  terminatedFlows.add(flowId);
+  if (terminatedFlows.size > MAX_TERMINATED_FLOWS) {
+    const oldest = terminatedFlows.values().next().value;
+    if (oldest !== undefined) terminatedFlows.delete(oldest);
+  }
+}
+/** Test-only helper for resetting the latch between cases. */
+export function __resetTerminatedFlowsForTest(): void {
+  terminatedFlows.clear();
+}
+
 // Terminal task-flow statuses per OpenClaw SDK `TaskFlowStatus`:
 //   "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed"
 //   | "cancelled" | "lost"
@@ -278,9 +305,10 @@ export function processEvent(params: {
   // a stale agent turn for a flow the consumer already saw close.
   const flowAlreadyTerminated =
     typeof currentFlow?.status === "string" && TERMINAL_FLOW_STATUSES.has(currentFlow.status);
-  if (flowAlreadyTerminated) {
+  const flowLatchedTerminal = terminatedFlows.has(body.flow_id);
+  if (flowAlreadyTerminated || flowLatchedTerminal) {
     deps.logger?.info?.(
-      `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status}`,
+      `langgraph-bridge: ignoring stale ${kind} for terminated flow=${body.flow_id} status=${currentFlow?.status ?? "unknown"} latched=${flowLatchedTerminal}`,
     );
     return { status: "ok", action: "ignored:post-terminal" };
   }
@@ -323,18 +351,63 @@ export function processEvent(params: {
       // We don't move into "waiting" because the agent decides freely,
       // not against a langgraph interrupt.
       break;
-    case "terminal":
-      flows.finish({
-        flowId: body.flow_id,
-        expectedRevision: flowRevision,
-        stateJson: {
-          terminal_title: title,
-          terminal_summary: summary,
-          data: body.data ?? null,
-        },
-        endedAt: Date.now(),
-      });
+    case "terminal": {
+      // Latch synchronously BEFORE finish(): finish() can throw a revision
+      // conflict when concurrent milestone runTask calls bumped the revision
+      // mid-storm, leaving the SDK status non-terminal. The latch guarantees
+      // every later frame for this flow_id is dropped regardless (issue #101).
+      latchTerminated(body.flow_id);
+      const terminalStateJson = {
+        terminal_title: title,
+        terminal_summary: summary,
+        data: body.data ?? null,
+      };
+      // finish() is the flow's LAST state transition. It can throw a revision
+      // conflict when concurrent milestone runTask calls bumped the revision
+      // between our read (flowRevision) and here. Two-step hardening (#101):
+      //   1. Re-read the current revision and retry finish() once, so the
+      //      terminal state still COMMITS despite the race.
+      //   2. If it still fails, swallow + warn rather than rethrow. A terminal
+      //      event has no productive retry (the flow is done), and letting it
+      //      propagate 500s the webhook -> LangGraph re-delivers -> feeds the
+      //      post-terminal replay storm this issue is about. The terminal latch
+      //      already guarantees replay suppression regardless of whether the
+      //      SDK status committed.
+      try {
+        flows.finish({
+          flowId: body.flow_id,
+          expectedRevision: flowRevision,
+          stateJson: terminalStateJson,
+          endedAt: Date.now(),
+        });
+      } catch (finishErr) {
+        const reread = flows.get(body.flow_id) as { revision?: number } | undefined;
+        const freshRevision = reread?.revision;
+        try {
+          if (freshRevision === undefined || freshRevision === flowRevision) {
+            // Revision didn't move (or is unreadable) — a plain retry would
+            // hit the same conflict, so don't bother; fall through to swallow.
+            throw finishErr;
+          }
+          flows.finish({
+            flowId: body.flow_id,
+            expectedRevision: freshRevision,
+            stateJson: terminalStateJson,
+            endedAt: Date.now(),
+          });
+          deps.logger?.info?.(
+            `langgraph-bridge: terminal finish() committed on revision-refresh retry flow=${body.flow_id} (${flowRevision}->${freshRevision})`,
+          );
+        } catch (retryErr) {
+          deps.logger?.warn?.(
+            `langgraph-bridge: terminal finish() failed for flow=${body.flow_id} — swallowed to avoid a 500/replay-retry storm (latch still suppresses replays): ${
+              (retryErr as Error)?.message ?? String(retryErr)
+            }`,
+          );
+        }
+      }
       break;
+    }
   }
 
   // 2. Decide whether to wake the agent. Phase 4: wake via the
