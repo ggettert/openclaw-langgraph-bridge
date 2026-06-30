@@ -973,11 +973,68 @@ describe("dispatchAndStream — F6 SSE buffer cap", () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
-    // Stream closes cleanly — onClose fires, and crucially no overflow onError.
+    // Stream closes cleanly — onClose fires and no error of any kind occurs.
     await vi.waitFor(() => expect(closes).toHaveLength(1));
-    expect(errors.filter((e) => /un-terminated SSE frame exceeded/.test(e.message))).toHaveLength(
-      0,
-    );
+    expect(errors).toHaveLength(0);
+  });
+
+  it("preserves sawTerminal on overflow so a real terminal is not overwritten", async () => {
+    // A real terminal frame arrives, THEN the server keeps streaming an
+    // un-terminated oversized frame. onClose must report sawTerminal=true so
+    // the caller does not synthesize a second graph:end over the real terminal.
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        streamController = c;
+      },
+    });
+
+    const fetchImpl = vi.fn(async (_url: string) => {
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+
+    const errors: Error[] = [];
+    const closes: boolean[] = [];
+
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-overflow-after-terminal",
+      flowId: "f-overflow-after-terminal",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: () => {},
+        onError: (e) => errors.push(e),
+        onClose: (sawTerminal) => closes.push(sawTerminal),
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
+
+    const encoder = new TextEncoder();
+    // A complete terminal frame first.
+    const terminalFrame = `event: custom\r\ndata: ${JSON.stringify({
+      kind: "terminal",
+      title: "done",
+      summary: "graph complete",
+    })}\r\n\r\n`;
+    streamController.enqueue(encoder.encode(terminalFrame));
+    // Then an un-terminated oversized frame that trips the cap.
+    streamController.enqueue(encoder.encode("event: message\r\ndata: "));
+    const oneMb = "x".repeat(1024 * 1024);
+    for (let i = 0; i < 11; i++) {
+      streamController.enqueue(encoder.encode(oneMb));
+    }
+
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+    expect(errors[0]?.message).toMatch(/un-terminated SSE frame exceeded/);
+    // sawTerminal=true: the real terminal must not be overwritten by a synth.
+    expect(closes[0]).toBe(true);
   });
 });
 

@@ -542,6 +542,9 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
         // If that remainder exceeds the cap, the server is streaming an
         // un-terminated or oversized frame — fail fast instead of growing to OOM.
         if (buffered.length > MAX_SSE_BUFFER_CHARS) {
+          // Tear the stream down FIRST so the OOM protection holds even if a
+          // handler below throws.
+          controller.abort();
           try {
             handlers.onError?.(
               new Error(
@@ -549,11 +552,14 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
               ),
             );
           } finally {
-            // sawTerminal=false so the caller's synthetic-terminal fallback runs
-            // and the flow is not left stuck in "running".
-            handlers.onClose?.(false);
+            // Pass the real `sawTerminal`, not a hardcoded false: if a terminal
+            // or hitl frame was already seen, the caller must NOT synthesize a
+            // second graph:end that would overwrite the real terminal/waiting
+            // state. If none was seen this is false, so the caller's
+            // synthetic-terminal fallback still runs and the flow isn't left
+            // stuck in "running".
+            handlers.onClose?.(sawTerminal);
           }
-          controller.abort();
           return;
         }
       }
