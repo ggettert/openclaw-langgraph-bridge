@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a defect in openclaw-langgraph-bridge
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the sections below so we can reproduce it.
+
+        **Do not report security vulnerabilities here.** Use [GitHub Security Advisories](https://github.com/ggettert/openclaw-langgraph-bridge/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen instead.
+      placeholder: When I dispatch a workflow with ..., the bridge ... but I expected ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce. Include the dispatch payload, workflow shape, or config if relevant (redact secrets).
+      placeholder: |
+        1. Configure the plugin with ...
+        2. Call `langgraph_dispatch` with ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any relevant log output. This will be rendered as a code block, so no backticks needed. Redact secrets and tokens.
+      render: shell
+  - type: input
+    id: bridge-version
+    attributes:
+      label: Bridge version
+      description: Version of openclaw-langgraph-bridge (from package.json or your lockfile).
+      placeholder: e.g. 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: deployment-target
+    attributes:
+      label: LangGraph deployment target
+      description: Which LangGraph backend are you running against?
+      placeholder: e.g. langgraph dev / LangSmith Deployment / LangSmith Fleet / Aegra
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS, and OpenClaw version.
+      placeholder: e.g. Node 22.x, Linux, OpenClaw 2026.6.x
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I have redacted any secrets, tokens, or private hostnames from this report.
+          required: true
