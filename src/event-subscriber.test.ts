@@ -879,6 +879,109 @@ describe("dispatchAndStream — onClose after non-abort stream error", () => {
 });
 
 // ---------------------------------------------------------------------------
+// dispatchAndStream — F6: unbounded SSE buffer cap
+// ---------------------------------------------------------------------------
+
+describe("dispatchAndStream — F6 SSE buffer cap", () => {
+  it("aborts with onError + onClose(false) when an un-terminated frame exceeds the cap", async () => {
+    // Stream a single never-terminated frame in chunks that together exceed the
+    // ~10 MB cap. No "\n\n" / "\r\n\r\n" separator is ever sent, so the buffer
+    // would grow unbounded without the F6 guard.
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        streamController = c;
+      },
+    });
+
+    const fetchImpl = vi.fn(async (_url: string) => {
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+
+    const errors: Error[] = [];
+    const closes: boolean[] = [];
+
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-overflow",
+      flowId: "f-overflow",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: () => {},
+        onError: (e) => errors.push(e),
+        onClose: (sawTerminal) => closes.push(sawTerminal),
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
+
+    // Start a frame that never terminates, then push enough 1 MB chunks to
+    // cross the 10 MB cap.
+    const encoder = new TextEncoder();
+    streamController.enqueue(encoder.encode("event: message\r\ndata: "));
+    const oneMb = "x".repeat(1024 * 1024);
+    for (let i = 0; i < 11; i++) {
+      streamController.enqueue(encoder.encode(oneMb));
+    }
+
+    // The guard fires: onError with an overflow message and onClose(false) so
+    // the caller's synthetic-terminal fallback runs (flow not left running).
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+    expect(errors[0]?.message).toMatch(/un-terminated SSE frame exceeded/);
+    expect(closes[0]).toBe(false);
+  });
+
+  it("does not trip on a large but properly terminated frame", async () => {
+    // A single ~2 MB frame that DOES terminate must be delivered, not rejected.
+    const bigPayload = JSON.stringify({ kind: "status", note: "y".repeat(2 * 1024 * 1024) });
+    const frame = `event: message\r\ndata: ${bigPayload}\r\n\r\n`;
+
+    const fetchImpl = vi.fn(async (_url: string) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(frame));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+
+    const errors: Error[] = [];
+    const closes: boolean[] = [];
+
+    dispatchAndStream({
+      baseUrl: "http://lg.test",
+      threadId: "t-big-ok",
+      flowId: "f-big-ok",
+      assistantId: "fleet",
+      input: null,
+      handlers: {
+        onEvent: () => {},
+        onError: (e) => errors.push(e),
+        onClose: (sawTerminal) => closes.push(sawTerminal),
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    // Stream closes cleanly — onClose fires, and crucially no overflow onError.
+    await vi.waitFor(() => expect(closes).toHaveLength(1));
+    expect(errors.filter((e) => /un-terminated SSE frame exceeded/.test(e.message))).toHaveLength(
+      0,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // dispatchAndStream — post-terminal replay suppression (fix: suppress-post-terminal-replay)
 // ---------------------------------------------------------------------------
 
