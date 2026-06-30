@@ -38,7 +38,7 @@ body:
     attributes:
       label: Bridge version
       description: Version of openclaw-langgraph-bridge (from package.json or your lockfile).
-      placeholder: e.g. 1.0.0
+      placeholder: e.g. 0.15.0
     validations:
       required: true
   - type: input
