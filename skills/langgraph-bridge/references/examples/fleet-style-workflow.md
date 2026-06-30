@@ -194,7 +194,7 @@ langgraph_resume(
 
 ## Source events and phase vocabulary
 
-The bridge plugin maps fleet's `{phase, event, …}` custom-stream emissions into Mode B events. Fleet sets an explicit `kind` (and matching `title`) on each emission rather than relying on the bridge's coarse fallback — `:started` frames are `status` (silent acks), `:finished` frames with a verdict/outcome are `milestone` wakes — which is what keeps a parallel-phase run from wake-storming. The agent still matches on `event.title` (`<phase>:started` / `<phase>:finished`), so the reader-side logic above is unchanged. Available `<phase>` names (fleet-specific):
+The bridge plugin maps fleet's `{phase, event, …}` custom-stream emissions into Mode B events. The bridge's coarse fallback (`translatePhaseEventVocabulary`) classifies by `event` name alone: **both** `started` **and** `finished` → `milestone`, `failed` → `terminal`, anything else → `status` — so relying on it makes every `:started` a wake, and a parallel-phase run wake-storms. Fleet avoids that by setting an explicit `kind` (and matching `title`) on each emission: `:started` frames carry `kind: "status"` (silent acks), `:finished` frames with a verdict/outcome carry `kind: "milestone"` (wakes). The agent still matches on `event.title` (`<phase>:started` / `<phase>:finished`), so the reader-side logic above is unchanged. Available `<phase>` names (fleet-specific):
 
 - `designer` (started, finished)
 - `coder` (started, finished)
