@@ -59,7 +59,7 @@ POST {langgraphBaseUrl}/threads/{thread_id}/runs/stream
 
 The `x-api-key` header is sent on **all** outbound HTTP calls to the LangGraph server (thread creation, run dispatch, SSE stream, schema introspection, and assistant list). It is omitted entirely when `langgraphApiKey` is not configured, which is the correct behavior for `langgraph dev` and Aegra self-hosted deployments. The `x-auth-scheme` header is only sent when **both** `langgraphApiKey` and `langgraphAuthScheme` are configured — it must always travel alongside `x-api-key` and is meaningless without it.
 
-> **⚠️ Verification status:** the `x-api-key` / `x-auth-scheme` paths are covered by unit tests against mocked HTTP only. As of v1.0, no end-to-end verification against a live LangSmith Deployment or Fleet endpoint has been performed.
+> **⚠️ Verification status (known limitation):** as of v0.15.0 the `x-api-key` / `x-auth-scheme` paths are covered by unit tests against **mocked HTTP only** — no end-to-end verification against a live LangSmith Deployment or Fleet endpoint has been performed. The `langgraph dev` and Aegra (no-API-key) paths are exercised end-to-end. See [installation.md → LangSmith Deployment](./installation.md#langsmith-deployment-cloud) for the full caveat.
 
 The plugin uses `stream_mode=["updates", "custom"]`. It handles:
 
@@ -279,24 +279,29 @@ def do_work(state: WorkflowState) -> WorkflowState:
     """Main work node — emits a phase event, then asks for human approval."""
     writer = get_stream_writer()
 
-    # Signal that work started
+    # Signal that work started. kind="status" => announcement only, never wakes
+    # the agent. Set `title` because an explicit kind skips the phase->title map.
     writer({
         "schema_version": 1,
         "phase": "worker",
         "event": "started",
         "ticket_id": state["ticket_id"],
         "summary": "processing ticket",
+        "kind": "status",
+        "title": "worker:started",
     })
 
     # ... do actual work here ...
 
-    # Signal completion
+    # Signal completion. This carries a real outcome, so kind="milestone" => wake.
     writer({
         "schema_version": 1,
         "phase": "worker",
         "event": "finished",
         "ticket_id": state["ticket_id"],
         "summary": "work complete, awaiting approval",
+        "kind": "milestone",
+        "title": "worker:finished",
     })
 
     # Pause for human approval (HITL gate)
@@ -326,10 +331,12 @@ graph = builder.compile()
 **What the agent sees:**
 
 1. `langgraph_dispatch` returns a `flow_id`.
-2. The plugin streams `updates` frames → `worker:started` milestone wake (if `decision_only=false`) or silent (if `decision_only=true`).
+2. The `worker:started` event is `kind="status"` → flow-state only, the agent is **not** woken (regardless of `decision_only`).
 3. The `__interrupt__` node fires → `hitl` event → agent is woken with the interrupt prompt.
 4. Agent calls `langgraph_resume` with the human's answer.
-5. The resumed stream emits `updates` → `worker:finished` milestone and then `graph:end` → `terminal` wake.
+5. The resumed stream emits `worker:finished` (`kind="milestone"` → wake) and then `graph:end` → `terminal` wake.
+
+> In real workflows, use the [`emit_phase_event` helper](./phase-event-contract.md#recommended-pattern--emit_phase_event-wrapper) rather than hand-writing `kind`/`title` on every `writer(...)` call — it derives them for you.
 
 ---
 

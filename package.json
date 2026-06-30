@@ -3,6 +3,8 @@
   "version": "0.15.0",
   "description": "OpenClaw plugin that lets any agent drive LangGraph workflows from inside a conversation thread with proactive event wake-back.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "license": "MIT",
   "author": "Grace Gettert",
   "repository": {
@@ -27,7 +29,9 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "lint": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "test": "npm run lint && vitest run",
