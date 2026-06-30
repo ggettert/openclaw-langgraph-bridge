@@ -50,10 +50,12 @@ Verify each before starting.
    |---|---|---|
    | `langgraph dev` (local dev server) | No | Zero-config local dev server |
    | [Aegra](https://docs.aegra.dev) (self-hosted production) | No | Drop-in LangGraph server with Postgres + Redis |
-   | [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph, cloud) | **Yes** | Set `langgraphApiKey` in plugin config (see below) |
-   | LangSmith Fleet | **Yes** | Set both `langgraphApiKey` and `langgraphAuthScheme: "langsmith-api-key"` |
+   | [LangSmith Deployment](https://docs.smith.langchain.com/langgraph-platform) (LangChain's hosted LangGraph, cloud) | **Yes** | Set `langgraphApiKey` in plugin config (see below). ⚠️ auth path not yet e2e-verified — see note |
+   | LangSmith Fleet | **Yes** | Set both `langgraphApiKey` and `langgraphAuthScheme: "langsmith-api-key"`. ⚠️ auth path not yet e2e-verified — see note |
 
    For LangSmith Deployment or Fleet, generate an API key in the LangSmith dashboard (env var convention: `LANGGRAPH_API_KEY`) and supply it as `langgraphApiKey` in plugin config. Rotating `langgraphApiKey` requires a gateway restart for the new value to take effect (tool definitions cache config at plugin registration time).
+
+   > **⚠️ Which targets are verified.** `langgraph dev` and Aegra (self-hosted, no API key) are exercised end-to-end in real runs. The **LangSmith Deployment / Fleet auth path** (`x-api-key` / `x-auth-scheme`) is currently covered by **unit tests against mocked HTTP only** — no live verification against a hosted LangSmith endpoint has been done yet. The header wiring is implemented to LangChain's documented spec, but treat it as unproven until someone runs it against a live deployment. See the [auth verification status](#langsmith-deployment-cloud) note below.
 4. **A `callbackToken`** — a pre-shared secret the plugin uses to authenticate inbound webhook POSTs. Generate one if you don't have one:
    ```bash
    openssl rand -hex 32
@@ -281,7 +283,9 @@ The plugin sends `x-api-key: <langgraphApiKey>` on all outbound HTTP calls to th
 
 For LangSmith Fleet deployments, also set `langgraphAuthScheme: "langsmith-api-key"` — Fleet requires both `x-api-key` and `x-auth-scheme: langsmith-api-key` headers.
 
-> **⚠️ Verification status:** `langgraphApiKey` and `langgraphAuthScheme` are covered by unit tests against mocked HTTP only. As of v1.0, no end-to-end verification against a live LangSmith Deployment or Fleet endpoint has been performed. Please [file an issue](https://github.com/ggettert/openclaw-langgraph-bridge/issues) if you hit auth-related failures so we can pin down the wire-format quirk.
+> **⚠️ Verification status (known limitation).** As of v0.15.0, `langgraphApiKey` and `langgraphAuthScheme` are covered by unit tests against **mocked HTTP only** — there has been **no end-to-end verification against a live LangSmith Deployment or Fleet endpoint**. The headers are implemented to LangChain's documented wire format (`x-api-key`, plus `x-auth-scheme: langsmith-api-key` for Fleet), but the live handshake is unproven.
+>
+> By contrast, the `langgraph dev` and Aegra (no-API-key) paths **are** exercised end-to-end. If you deploy against hosted LangSmith and hit an auth failure, please [file an issue](https://github.com/ggettert/openclaw-langgraph-bridge/issues) with the response status/headers so we can pin down the wire-format quirk.
 
 ---
 
