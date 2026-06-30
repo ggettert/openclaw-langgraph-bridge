@@ -352,7 +352,7 @@ export function processEvent(params: {
   //     A 500 here is a misleading error signal for a flow that's
   //     actually done — NOT a re-delivery trigger: LangGraph's native
   //     webhook is terminal-only/single-shot with no 5xx retry, and the
-  //     devops-langgraph workflow emits frames via the SSE stream writer
+  //     workflow emits frames via the SSE stream writer
   //     (stream_mode=custom), not webhook POSTs.
   //   - `runTask` for status/milestone after terminal records spurious
   //     post-terminal task progress entries, which mislead an operator
@@ -427,9 +427,9 @@ export function processEvent(params: {
       //   2. If it still fails, swallow + warn rather than rethrow. A terminal
       //      event has no productive retry (the flow is done), so a 500 here is
       //      just a misleading error signal, not a re-delivery trigger.
-      //      (Verified against the LangGraph webhook docs + devops-langgraph
-      //      graph/workflow.py: the native webhook is terminal-only/single-shot
-      //      with no 5xx retry, and the workflow emits frames over the SSE
+      //      (Verified against the LangGraph webhook docs: the native webhook
+      //      is terminal-only/single-shot with no 5xx retry, and the workflow
+      //      emits frames over the SSE
       //      stream writer, never webhook POSTs — so nothing re-delivers on a
       //      500.) The post-terminal replay storm this issue is about comes from
       //      LangGraph's stream_mode buffer flush after graph:end; the
