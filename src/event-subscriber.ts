@@ -249,6 +249,14 @@ import { truncateSummary, truncateJsonSummary } from "./text-utils.js";
 
 const VALID_KINDS = new Set<string>(["status", "milestone", "decision", "terminal", "hitl"]);
 
+// F6: hard cap on the un-parsed SSE accumulation buffer in dispatchAndStream.
+// `buffered` grows until a frame separator (\n\n or \r\n\r\n) arrives. Without a
+// ceiling, a misconfigured or compromised LangGraph server streaming an
+// un-terminated (or pathologically large) frame would grow it until OOM.
+// JS strings are UTF-16, so ~10M chars is roughly ~20 MB of memory — a
+// conservative bound that still clears legitimate large `updates` state deltas.
+const MAX_SSE_BUFFER_CHARS = 10 * 1024 * 1024;
+
 /**
  * Translate native phase event `{phase, event, ...}` custom events into Mode B
  * shape. Used when a workflow author uses the project's own emit helper
@@ -527,6 +535,32 @@ export function dispatchAndStream(params: StreamingDispatchParams): AbortControl
               handlers.onEvent(result.body);
             }
           }
+        }
+
+        // F6: bound the un-parsed SSE buffer. After draining every complete
+        // frame above, `buffered` holds at most one incomplete partial frame.
+        // If that remainder exceeds the cap, the server is streaming an
+        // un-terminated or oversized frame — fail fast instead of growing to OOM.
+        if (buffered.length > MAX_SSE_BUFFER_CHARS) {
+          // Tear the stream down FIRST so the OOM protection holds even if a
+          // handler below throws.
+          controller.abort();
+          try {
+            handlers.onError?.(
+              new Error(
+                `langgraph stream aborted: un-terminated SSE frame exceeded ${MAX_SSE_BUFFER_CHARS} chars (~10 MB) without a frame separator`,
+              ),
+            );
+          } finally {
+            // Pass the real `sawTerminal`, not a hardcoded false: if a terminal
+            // or hitl frame was already seen, the caller must NOT synthesize a
+            // second graph:end that would overwrite the real terminal/waiting
+            // state. If none was seen this is false, so the caller's
+            // synthetic-terminal fallback still runs and the flow isn't left
+            // stuck in "running".
+            handlers.onClose?.(sawTerminal);
+          }
+          return;
         }
       }
 

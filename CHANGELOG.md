@@ -9,6 +9,10 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bounded the SSE accumulation buffer in `dispatchAndStream` (F6, #89).** The streaming reader appended each decoded chunk to a `buffered` string and only drained it when a frame separator (`\n\n` / `\r\n\r\n`) arrived. A misconfigured or compromised LangGraph server streaming an un-terminated frame — or a single pathologically large `updates` state delta — could grow that buffer without limit until the process OOM'd. The reader now caps the un-parsed remainder at ~10 MB (10,485,760 chars): on overflow it fires `onError` with an explicit overflow message, calls `onClose(false)` so the caller's synthetic-terminal fallback runs (the flow is not left stuck in `running`), aborts the stream, and returns. The cap is checked *after* draining complete frames, so legitimate large but properly terminated frames are unaffected. (#89)
+
 ## [0.15.0] - 2026-06-29
 
 ### Added
