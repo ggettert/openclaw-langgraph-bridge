@@ -144,33 +144,85 @@ Agent receives: milestone wake, expected post: `🎉 merge finished — merged h
 
 ## Recommended pattern — `emit_phase_event` wrapper
 
-Wrap `get_stream_writer()` in a small helper to enforce shape consistency across
-your workflow nodes:
+Wrap `get_stream_writer()` in a small helper that enforces shape consistency **and
+derives an explicit `kind` + `title`** so you don't lean on the bridge's coarse
+`started`/`finished`→`milestone` fallback (which wake-storms under `decision_only=false`).
+This helper is the recommended reference implementation:
 
 ```python
-# Recommended: wrap get_stream_writer() in a helper to enforce shape consistency.
-def emit_phase_event(phase, event, ticket_id, summary, **extra):
+def emit_phase_event(phase, event, ticket_id, summary, *, kind=None, title=None, **extra):
+    """Emit a phase event with an explicit bridge `kind` + `title`.
+
+    Setting `kind` routes the payload through the bridge's explicit Mode B path,
+    which is checked BEFORE the phase->title mapping — so we also set `title`
+    (defaulting to f"{phase}:{event}") to preserve context, otherwise the wake
+    title collapses to `custom:<kind>`.
+
+    Default kind derivation (override via the `kind=` arg when needed):
+      started                              -> status    (announce; never wakes)
+      finished w/ verdict or details.terminal -> milestone (carries an outcome)
+      finished (bare)                      -> status    ("phase done" is noise)
+      failed                               -> unset     (bridge fallback = terminal)
+    """
     from langgraph.config import get_stream_writer
-    get_stream_writer()({
+
+    ev = event.lower()
+    if kind is None:
+        has_outcome = bool(extra.get("verdict") or (extra.get("details") or {}).get("terminal"))
+        if ev == "finished" and has_outcome:
+            kind = "milestone"
+        elif ev in ("started", "finished"):
+            kind = "status"
+        # ev == "failed": leave kind unset -> bridge maps it to terminal(failed),
+        # which preserves the `phase:failed` title for free.
+
+    payload = {
         "schema_version": 1,
         "phase": phase,
         "event": event,
         "ticket_id": ticket_id,
         "summary": summary,
         **extra,
-    })
+    }
+    if kind is not None:
+        payload["kind"] = kind
+        payload["title"] = title or f"{phase}:{event}"
+    get_stream_writer()(payload)
 ```
 
-Usage in a workflow node:
+Usage in workflow nodes:
 
 ```python
-# In a node function:
+# Phase start — derives kind=status (announcement; never wakes):
 emit_phase_event(
-    "coder",
-    "started",
+    "coder", "started",
     ticket_id=state["ticket_id"],
     summary="analyzing spec",
     branch=state.get("branch"),
+)
+
+# Reviewer finish WITH a verdict — derives kind=milestone (carries an outcome):
+emit_phase_event(
+    "reviewer", "finished",
+    ticket_id=state["ticket_id"],
+    summary="verdict: approve",
+    verdict="approve",
+)
+
+# Human-gate decision — no verdict, so force a wake explicitly:
+emit_phase_event(
+    "merge_gate", "finished",
+    ticket_id=state["ticket_id"],
+    summary="awaiting human approval",
+    kind="milestone",
+)
+
+# Failure — leave kind unset; the bridge classifies it as terminal(failed):
+emit_phase_event(
+    "coder", "failed",
+    ticket_id=state["ticket_id"],
+    summary="RuntimeError: git push rejected",
+    error="RuntimeError: git push rejected",
 )
 ```
 
