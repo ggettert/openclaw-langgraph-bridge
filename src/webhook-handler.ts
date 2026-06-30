@@ -352,7 +352,7 @@ export function processEvent(params: {
   //     A 500 here is a misleading error signal for a flow that's
   //     actually done — NOT a re-delivery trigger: LangGraph's native
   //     webhook is terminal-only/single-shot with no 5xx retry, and the
-  //     workflow emits frames via the SSE stream writer
+  //     the workflow emits frames via the SSE stream writer
   //     (stream_mode=custom), not webhook POSTs.
   //   - `runTask` for status/milestone after terminal records spurious
   //     post-terminal task progress entries, which mislead an operator
