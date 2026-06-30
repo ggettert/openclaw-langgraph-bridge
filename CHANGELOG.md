@@ -15,9 +15,46 @@ First public release. The bridge is now published openly on npm and ClawHub; the
 API surface (config schema, dispatch/inspect/resume tools, webhook event
 contract) is considered stable under semantic versioning from this point.
 
+### Added
+
+- npm-publish.yml workflow with trusted publishing (OIDC, no token rotation).
+- clawhub-publish.yml workflow. Requires `CLAWHUB_TOKEN` repo secret.
+- CI version-sync check (`package.json` ↔ `openclaw.plugin.json`).
+- `SECURITY.md` reintroduced as a 5-line pointer to GitHub Security Advisories. Friendlier discoverability than expecting users to find the Security section in README. (Issue #61, PR #63)
+- CONTRIBUTING.md, CODE_OF_CONDUCT.md (PR #47)
+- CHANGELOG.md (this file)
+- `docs/workflow-contract.md` — canonical workflow integration guide for OSS users (PR #47)
+- README badges: npm version, CI status, license (PR #47)
+- Integration test suite covering end-to-end SSE and webhook flows. (PR #56, closes #49)
+
+### Changed
+
+- Distribution model: now publishes to npm and ClawHub via dedicated workflows. GitHub release tarball pipeline removed — install paths are now `clawhub:`, `npm:`, `git:`, or build-from-source.
+- Package renamed to `@ggettert/openclaw-langgraph-bridge` (scoped).
+- `openclaw` peer dependency bumped to `^2026.6.9` to pull security fixes for hono / undici / protobufjs / esbuild / tar transitive vulnerabilities.
+- Relicensed from Apache 2.0 to MIT to match the OpenClaw ecosystem (core OpenClaw, ClawHub, and related repos are MIT). Sole copyright holder consented to relicense. (PR #58)
+- Removed organizational references in docs/comments; copyright holder is now `Grace Gettert`. (PR #58)
+- `decision_only` parameter now functions per its name. When `true` (default), milestone events update flow state silently but do **not** wake the agent. When `false`, milestone events also wake the agent. Decision, HITL, and terminal events always wake the agent regardless of this setting. (#6, PR #47)
+- README Status section updated to stable pre-1.0 framing; links to CHANGELOG.md for migration notes (PR #47)
+- `docs/installation.md` rewritten for OSS users: generic prereqs, install paths, full config reference, troubleshooting (PR #47)
+- CONTRIBUTING.md trimmed and reorganized; Releases section added (PR #47)
+- CONTRIBUTING.md "Where to File Things" — security row now points directly to GitHub Security Advisories (PR #47)
+- Docs polish: workflow-contract.md, phase-event-contract.md, installation.md, README updated for OSS clarity. (PR #59)
+
+### Removed
+
+- `LanggraphClient.resumeRun()` — dead code with wrong wire format. Use `dispatchAndStream` for resume operations. (#8, PR #47)
+- `SECURITY.md` — security disclosure is via GitHub Security Advisories (see README Security section and CONTRIBUTING.md). (PR #47)
+
 ### Fixed
 
-- **Bounded the SSE accumulation buffer in `dispatchAndStream` (F6, #89).** The streaming reader appended each decoded chunk to a `buffered` string and only drained it when a frame separator (`\n\n` / `\r\n\r\n`) arrived. A misconfigured or compromised LangGraph server streaming an un-terminated frame — or a single pathologically large `updates` state delta — could grow that buffer without limit until the process OOM'd. The reader now caps the un-parsed remainder at ~10 MB (10,485,760 chars): on overflow it fires `onError` with an explicit overflow message, calls `onClose(false)` so the caller's synthetic-terminal fallback runs (the flow is not left stuck in `running`), aborts the stream, and returns. The cap is checked *after* draining complete frames, so legitimate large but properly terminated frames are unaffected. (#89)
+- SSE stream non-abort errors mid-stream now invoke `onClose` so the dispatch/resume caller's synthetic-terminal fallback fires. Previously: a connection reset or LangGraph pod restart could leave the flow permanently in `"running"`.
+- Concurrent `langgraph_resume` calls on the same flow_id no longer open duplicate SSE streams (#9, PR #62). The second concurrent call now returns `resume_already_in_progress` instead of racing through the TOCTOU window.
+- Orphaned `queued` flow on dispatch failure now tombstoned so `langgraph_inspect` doesn't surface stale records. (#7, PR #47)
+- `typebox` package replaced with canonical `@sinclair/typebox`. (#15, PR #47)
+- Release tarball no longer ships devDependencies; `npm ci --omit=dev --omit=optional --omit=peer` + verification step in release workflow. (#23, PR #47)
+- LangSmith Deployment and Fleet auth: `x-api-key` header now sent on all outbound LangGraph HTTP requests when `langgraphApiKey` is configured; `x-auth-scheme` sent alongside it when `langgraphAuthScheme` is also set. (#29, PR #57)
+- **Bounded the SSE accumulation buffer in `dispatchAndStream` (F6, #89).** The streaming reader appended each decoded chunk to a `buffered` string and only drained it when a frame separator (`\n\n` / `\r\n\r\n`) arrived. A misconfigured or compromised LangGraph server streaming an un-terminated frame — or a single pathologically large `updates` state delta — could grow that buffer without limit until the process OOM'd. The reader now caps the un-parsed remainder at ~10 MB (10,485,760 chars): on overflow it fires `onError` with an explicit overflow message, calls `onClose(false)` so the caller's synthetic-terminal fallback runs (the flow is not left stuck in `running`), aborts the stream, and returns. The cap is checked *after* draining complete frames, so legitimate large but properly terminated frames are unaffected. (#111)
 
 ## [0.15.0] - 2026-06-29
 
@@ -64,47 +101,6 @@ contract) is considered stable under semantic versioning from this point.
 ### Changed
 - `wakeAgentAsync` gracefully degrades when the gateway rejects the `--model` value ("Model override X is not allowed for agent Y"). On rejection, the bridge logs a WARN, invokes the `onInvalidModel` callback, and retries the subprocess WITHOUT `--model` so the wake still lands on the session's primary model. The webhook handler caches the per-flow rejection so subsequent milestone wakes for the same flow skip the override entirely. (#83, #84)
 
-## [1.0.0] - 2026-06-24
-
-### Changed
-- Distribution model: now publishes to npm and ClawHub via dedicated workflows. GitHub release tarball pipeline removed — install paths are now `clawhub:`, `npm:`, `git:`, or build-from-source.
-- Package renamed to `@ggettert/openclaw-langgraph-bridge` (scoped).
-- `openclaw` peer dependency bumped to `^2026.6.9` to pull security fixes for hono / undici / protobufjs / esbuild / tar transitive vulnerabilities.
-
-### Added
-- npm-publish.yml workflow with trusted publishing (OIDC, no token rotation).
-- clawhub-publish.yml workflow. Requires `CLAWHUB_TOKEN` repo secret.
-- CI version-sync check (`package.json` ↔ `openclaw.plugin.json`).
-- `SECURITY.md` reintroduced as a 5-line pointer to GitHub Security Advisories. Friendlier discoverability than expecting users to find the Security section in README. (Issue #61, PR #63)
-- CONTRIBUTING.md, CODE_OF_CONDUCT.md (PR #47)
-- CHANGELOG.md (this file)
-- `docs/workflow-contract.md` — canonical workflow integration guide for OSS users (PR #47)
-- README badges: npm version, CI status, license (PR #47)
-- Integration test suite covering end-to-end SSE and webhook flows. (PR #56, closes #49)
-
-### Changed
-- Relicensed from Apache 2.0 to MIT to match the OpenClaw ecosystem (core OpenClaw, ClawHub, and related repos are MIT). Sole copyright holder consented to relicense. (PR #58)
-- Removed organizational references in docs/comments; copyright holder is now `Grace Gettert`. (PR #58)
-- `decision_only` parameter now functions per its name. When `true` (default), milestone events update flow state silently but do **not** wake the agent. When `false`, milestone events also wake the agent. Decision, HITL, and terminal events always wake the agent regardless of this setting. (#6, PR #47)
-- README Status section updated to stable pre-1.0 framing; links to CHANGELOG.md for migration notes (PR #47)
-- `docs/installation.md` rewritten for OSS users: generic prereqs, install paths, full config reference, troubleshooting (PR #47)
-- CONTRIBUTING.md trimmed and reorganized; Releases section added (PR #47)
-- CONTRIBUTING.md "Where to File Things" — security row now points directly to GitHub Security Advisories (PR #47)
-- Docs polish: workflow-contract.md, phase-event-contract.md, installation.md, README updated for OSS clarity. (PR #59)
-
-### Removed
-- `LanggraphClient.resumeRun()` — dead code with wrong wire format. Use `dispatchAndStream` for resume operations. (#8, PR #47)
-- `SECURITY.md` — security disclosure is via GitHub Security Advisories (see README Security section and CONTRIBUTING.md). (PR #47)
-
-### Fixed
-- SSE stream non-abort errors mid-stream now invoke `onClose` so the dispatch/resume caller's synthetic-terminal fallback fires. Previously: a connection reset or LangGraph pod restart could leave the flow permanently in `"running"`.
-- Concurrent `langgraph_resume` calls on the same flow_id no longer open duplicate SSE streams (#9, PR #62). The second concurrent call now returns `resume_already_in_progress` instead of racing through the TOCTOU window.
-- Orphaned `queued` flow on dispatch failure now tombstoned so `langgraph_inspect` doesn't surface stale records. (#7, PR #47)
-- `typebox` package replaced with canonical `@sinclair/typebox`. (#15, PR #47)
-- Release tarball no longer ships devDependencies; `npm ci --omit=dev --omit=optional --omit=peer` + verification step in release workflow. (#23, PR #47)
-- LangSmith Deployment and Fleet auth: `x-api-key` header now sent on all outbound LangGraph HTTP requests when `langgraphApiKey` is configured; `x-auth-scheme` sent alongside it when `langgraphAuthScheme` is also set. (#29, PR #57)
-
----
 
 ## [0.12.4] - 2026-06-18
 
