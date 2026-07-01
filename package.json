@@ -67,7 +67,10 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.6.9"
+    }
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49"
