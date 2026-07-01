@@ -21,7 +21,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create GitHub Release
+      # Create the Release as a DRAFT. Publishing it manually (as a real user)
+      # is what emits the release:published event that fans out to the npm and
+      # ClawHub publish workflows. A Release created/published by the default
+      # GITHUB_TOKEN would NOT retrigger those workflows, so the draft + manual
+      # publish step is the intentional gate that makes auto-publish fire.
+      - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
