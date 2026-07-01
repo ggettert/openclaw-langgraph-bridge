@@ -9,7 +9,9 @@ How the bridge classifies inbound workflow events and what each label means for 
 Every event the workflow emits carries two independent labels:
 
 - **`kind`** — the *semantic class*. Drives whether the agent wakes and how. One of five values (below). The workflow author sets it; the plugin enforces what it means (`src/event-classifier.ts`).
-- **`title`** — a short *machine-readable name*, e.g. `"coder:started"` / `"coder:finished"`. Shown in the wake-message header and used as the dedup key. Convention: `<phase>:<action>`. The reader matches on `title` to know *which* step fired; `kind` tells it *how loud* to be.
+- **`title`** — a short *machine-readable name*, e.g. `"coder:started"` / `"coder:finished"`. Shown in the wake-message header. Convention: `<phase>:<action>`. The reader matches on `title` to know *which* step fired; `kind` tells it *how loud* to be.
+
+> **Dedup note:** `title` is only the *fallback* dedup key. When the payload is a phase event (`data` carries `phase` + `event` strings), milestone dedup keys on `(flow_id, data.phase, data.event)` instead (`src/wake-dedup.ts:getDedupKey`). Overriding `title` alone won't change dedup behavior for phase-event payloads.
 
 `title` is the "SSE label" surfaced to the human. `kind` is the routing control. Do not conflate them: a `coder:finished` title can be `kind: "milestone"` (wakes) or `kind: "status"` (silent) depending on what the author wants.
 
