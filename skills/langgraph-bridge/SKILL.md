@@ -56,6 +56,19 @@ See [references/tools.md](./references/tools.md) for full parameter tables and r
 
 ---
 
+## Event labels & kinds
+
+Every event carries two independent labels:
+
+- **`kind`** — semantic class that drives wake behavior: `status` (silent), `milestone` (light wake), `decision` (wake), `terminal` (finish + wake), `hitl` (wait + wake).
+- **`title`** — machine-readable name shown in the wake header, convention `<phase>:<action>` (e.g. `coder:finished`). Match on `title` to know *which* step fired; `kind` tells you *how loud* to be. Same `title` can be `status` or `milestone` depending on author intent.
+
+`status` is always silent; `decision`/`hitl`/`terminal` always wake; `milestone` is the only kind `decision_only` toggles.
+
+See [references/event-labels.md](./references/event-labels.md) for the full table, `decision_only` interaction, and author-side wake-storm guidance.
+
+---
+
 ## Tools
 
 - `langgraph_list_workflows` — discover available workflows and check allowlist status. See [references/tools.md](./references/tools.md#langgraph_list_workflows).
