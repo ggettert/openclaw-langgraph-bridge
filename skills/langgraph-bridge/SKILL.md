@@ -7,6 +7,7 @@ metadata:
     emoji: "🔗"
     requires:
       bins: [openclaw]
+      config: ["plugins.entries.openclaw-langgraph-bridge.enabled"]
 ---
 
 # langgraph-bridge
