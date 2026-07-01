@@ -83,12 +83,15 @@ jobs:
 
       - name: Smoke-test runtime install
         run: |
-          # Reinstall with runtime + peer deps. The plugin imports openclaw/plugin-sdk/core
-          # at runtime, so --omit=peer would cause the smoke test to fail with
-          # "Cannot find module 'openclaw/plugin-sdk/core'". Dev and optional are still
-          # safe to omit because they aren't imported from dist/.
+          # Simulate a runtime-only install: production deps, no dev/optional.
           rm -rf node_modules
           npm ci --omit=dev --omit=optional
+          # `openclaw` is a peerDependency, provided by the OpenClaw host at
+          # runtime. npm does NOT auto-install a root package's own peer deps,
+          # and --omit=dev strips the devDependency copy, so dist/index.js's
+          # `import 'openclaw'` would fail with ERR_MODULE_NOT_FOUND. Install the
+          # declared peer range explicitly (no-save) to stand in for the host.
+          npm install --no-save "openclaw@$(node -p "require('./package.json').peerDependencies.openclaw")"
           # Plugin is ESM (tsconfig module=NodeNext + package.json type=module).
           # Use dynamic import() rather than require() to load it cleanly.
           node --input-type=module -e "await import('./dist/index.js'); console.log('OK: runtime entrypoint loads')"
