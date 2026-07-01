@@ -5,7 +5,9 @@ name: Publish to ClawHub
 # Actions tab. NOTE: a Release created by the default GITHUB_TOKEN does NOT emit
 # a release:published event that retriggers this workflow — the Release must be
 # published by a real identity (a user, or a PAT-authenticated action) for the
-# subscription below to fire. Requires the CLAWHUB_TOKEN secret.
+# subscription below to fire. See GitHub's workflow-triggering restriction:
+# https://docs.github.com/en/actions/using-workflows/triggering-a-workflow#triggering-a-workflow-from-a-workflow
+# Requires the CLAWHUB_TOKEN secret.
 on:
   release:
     types: [published]

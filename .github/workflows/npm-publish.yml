@@ -5,7 +5,8 @@ name: Publish to npm
 # Actions tab. NOTE: a Release created by the default GITHUB_TOKEN does NOT emit
 # a release:published event that retriggers this workflow — the Release must be
 # published by a real identity (a user, or a PAT-authenticated action) for the
-# subscription below to fire. See the PR that introduced this trigger.
+# subscription below to fire. See GitHub's workflow-triggering restriction:
+# https://docs.github.com/en/actions/using-workflows/triggering-a-workflow#triggering-a-workflow-from-a-workflow
 on:
   release:
     types: [published]
