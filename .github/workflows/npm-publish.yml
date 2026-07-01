@@ -49,6 +49,13 @@ jobs:
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
+      # OIDC trusted publishing (tokenless auth) requires npm >= 11.5.1. Node 22
+      # ships npm 10.x, which signs provenance but cannot authenticate the
+      # publish, so the registry returns a 404 on the scoped PUT. Upgrade npm
+      # before publishing.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
