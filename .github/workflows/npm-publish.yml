@@ -1,9 +1,14 @@
 name: Publish to npm
 
-# Manual-only. The tag-push trigger was removed so cutting a release tag does
-# not auto-fire npm publish (the smoke step needs the `openclaw` peer dep and
-# the pipeline is not currently green). Run via the Actions tab when ready.
+# Fires when a GitHub Release is published (release.yml creates it on a v* tag
+# push), and can also be dispatched manually against an existing tag from the
+# Actions tab. NOTE: a Release created by the default GITHUB_TOKEN does NOT emit
+# a release:published event that retriggers this workflow — the Release must be
+# published by a real identity (a user, or a PAT-authenticated action) for the
+# subscription below to fire. See the PR that introduced this trigger.
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -33,7 +38,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name || github.ref }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -50,7 +55,7 @@ jobs:
         id: release
         shell: bash
         env:
-          TARGET_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          TARGET_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
           TAG="${TARGET_TAG}"
