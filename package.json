@@ -1,6 +1,6 @@
 {
   "name": "@ggettert/openclaw-langgraph-bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenClaw plugin that lets any agent drive LangGraph workflows from inside a conversation thread with proactive event wake-back.",
   "type": "module",
   "main": "./dist/index.js",
