@@ -21,11 +21,7 @@
 export type LanggraphEventKind = "status" | "milestone" | "decision" | "terminal" | "hitl";
 
 export type ClassifierAction =
-  | "flow-update-only"
-  | "wake-light"
-  | "wake-decision"
-  | "wake-terminal"
-  | "wake-hitl";
+  "flow-update-only" | "wake-light" | "wake-decision" | "wake-terminal" | "wake-hitl";
 
 export type ClassifierInput = {
   kind: LanggraphEventKind;

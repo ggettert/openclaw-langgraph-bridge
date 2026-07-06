@@ -285,8 +285,7 @@ export function processEvent(params: {
   // takes expectedRevision. The flow likely moved through createManaged
   // -> resume(running) -> ... by the time we get here.
   const currentFlow = flows.get(body.flow_id) as
-    | { revision?: number; status?: string; stateJson?: unknown }
-    | undefined;
+    { revision?: number; status?: string; stateJson?: unknown } | undefined;
   const flowRevision = Number(currentFlow?.revision ?? params.flowRevision ?? 0);
 
   // #6: Read decision_only from flow stateJson. When true (the default),
