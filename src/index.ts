@@ -807,8 +807,7 @@ const entry: ReturnType<typeof definePluginEntry> = definePluginEntry({
                   // Re-read current revision in case processEvent already bumped
                   // it via runTask/setWaiting during stream setup.
                   const currentRecord = cleanupFlows.get(pendingFlowId) as
-                    | { revision?: number }
-                    | undefined;
+                    { revision?: number } | undefined;
                   const currentRevision = Number(
                     currentRecord?.revision ?? pendingFlowRevision ?? 0,
                   );
