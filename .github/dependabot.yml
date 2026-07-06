@@ -31,6 +31,8 @@ updates:
           - "@vitest/*"
           - "vitest"
           - "typescript"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
           - "tsx"
           - "eslint*"
           - "prettier"
