@@ -44,6 +44,13 @@ updates:
     # The openclaw peer dependency is excluded from grouping so peer-dep
     # bumps (which often correlate with security advisories) stay individually
     # visible and triageable.
+    ignore:
+      # Defer typescript 7.x until @typescript-eslint ships TS7 peer-dep support.
+      # PR #128 failed CI: typescript 6→7 breaks @typescript-eslint/eslint-plugin
+      # peerDependency (<6.1.0). Remove this ignore once typescript-eslint
+      # officially supports TS7.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # ─── GitHub Actions: workflow YAML updates ──────────────────────────────
   - package-ecosystem: github-actions
