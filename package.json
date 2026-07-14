@@ -60,7 +60,7 @@
     "openclaw": "^2026.6.9",
     "prettier": "^3.8.4",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.62.0",
     "vitest": "~4.1.9"
   },
