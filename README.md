@@ -46,21 +46,7 @@ Workflows that talk to this plugin must follow the [workflow contract](./docs/wo
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    H["Human\n(conversation thread)"]
-    A["OpenClaw Agent\nbrain + orchestrator"]
-    P["openclaw-langgraph-bridge\n5 tools + SSE subscriber\n+ webhook handler"]
-    L["LangGraph Workflow\ndurable, checkpointed execution"]
-
-    H <-->|conversation| A
-    A -->|dispatch / inspect / resume| P
-    P -->|LangGraph SDK HTTP| L
-    L -->|SSE event stream| P
-    L -.->|webhook callback| P
-    P -.->|"milestone | decision | hitl | terminal\nwake-back to originating thread"| A
-    A -->|"HITL prompt / summary / decision"| H
-```
+![Architecture: a human talks to an OpenClaw agent; the agent dispatches work through the bridge to a durable LangGraph workflow; events return through the bridge to wake the original thread.](./docs/architecture.svg)
 
 - Each conversation thread is its own session → its own agent instance with no shared state
 - `status` events update flow state silently (no agent wake)
