@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="510" viewBox="0 0 1120 510" role="img" aria-labelledby="title desc">
+  <title id="title">OpenClaw LangGraph Bridge architecture</title>
+  <desc id="desc">A human talks to an OpenClaw agent. The agent dispatches durable workflows through the bridge. LangGraph streams events and sends callbacks back through the bridge, which wakes the original conversation thread for decisions, HITL gates, and terminal events.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#475569"/></marker>
+  </defs>
+  <style>
+    .bg { fill:#ffffff; } .lane { fill:#f8fafc; stroke:#cbd5e1; stroke-width:1.5; }
+    .node { stroke-width:1.8; } .human { fill:#fef3c7; stroke:#d97706; } .agent { fill:#dbeafe; stroke:#2563eb; }
+    .bridge { fill:#dcfce7; stroke:#16a34a; } .workflow { fill:#f3e8ff; stroke:#9333ea; }
+    .line { fill:none; stroke:#475569; stroke-width:2; marker-end:url(#arrow); } .dash { fill:none; stroke:#475569; stroke-width:2; stroke-dasharray:7 6; marker-end:url(#arrow); }
+    .t { font-family:Arial,Helvetica,sans-serif; fill:#0f172a; } .title { font-size:20px; font-weight:700; } .label { font-size:15px; font-weight:700; } .body { font-size:13px; } .cap { font-size:12px; fill:#475569; }
+  </style>
+  <rect class="bg" width="1120" height="510" rx="12"/>
+  <text x="48" y="48" class="t title">Durable workflows, thread-aware agent control</text>
+  <text x="48" y="73" class="t cap">The agent owns the conversation; LangGraph owns execution state.</text>
+  <rect class="lane" x="40" y="105" width="1040" height="330" rx="16"/>
+  <path class="line" d="M215 235 H300"/>
+  <path class="line" d="M500 235 H590"/>
+  <path class="dash" d="M825 275 V345 H500 V285"/>
+  <path class="dash" d="M400 285 V375 H130 V285"/>
+  <text x="231" y="218" class="t cap">conversation</text>
+  <text x="513" y="218" class="t cap">dispatch · inspect · resume</text>
+  <text x="608" y="330" class="t cap">SSE stream + authenticated callback</text>
+  <text x="152" y="360" class="t cap">wake the originating thread</text>
+  <rect class="node human" x="70" y="190" width="145" height="95" rx="12"/>
+  <text x="142" y="229" text-anchor="middle" class="t label">Human</text>
+  <text x="142" y="253" text-anchor="middle" class="t body">conversation thread</text>
+  <rect class="node agent" x="300" y="175" width="200" height="110" rx="12"/>
+  <text x="400" y="219" text-anchor="middle" class="t label">OpenClaw agent</text>
+  <text x="400" y="244" text-anchor="middle" class="t body">reasoning + decisions</text>
+  <text x="400" y="263" text-anchor="middle" class="t body">HITL prompts + summaries</text>
+  <rect class="node bridge" x="590" y="165" width="235" height="120" rx="12"/>
+  <text x="707" y="205" text-anchor="middle" class="t label">LangGraph bridge</text>
+  <text x="707" y="230" text-anchor="middle" class="t body">tools · flow/session binding</text>
+  <text x="707" y="250" text-anchor="middle" class="t body">SSE subscriber · webhook handler</text>
+  <rect class="node workflow" x="900" y="175" width="145" height="110" rx="12"/>
+  <text x="972" y="219" text-anchor="middle" class="t label">LangGraph</text>
+  <text x="972" y="244" text-anchor="middle" class="t body">durable workflow</text>
+  <text x="972" y="263" text-anchor="middle" class="t body">checkpointed state</text>
+  <text x="70" y="475" class="t cap">Milestones can update state silently. Decisions, HITL gates, and terminal events wake the agent exactly where the work began.</text>
+</svg>

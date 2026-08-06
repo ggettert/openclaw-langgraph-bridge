@@ -9,6 +9,17 @@ Each entry references the originating PR. To find the exact commits, see the PR'
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-01
+
+### Added
+
+- Declared the OpenClaw plugin API compatibility floor (`>=2026.6.9`) in the plugin manifest. (PR #117)
+- Published releases automatically when a GitHub Release is published: npm via trusted publishing and ClawHub via its repository secret. (PR #118)
+
+### Changed
+
+- Refined the workflow and skill documentation to make the event `kind` / `title` labeling contract explicit. (PRs #115, #116)
+
 ## [1.0.0] - 2026-06-30
 
 First public release. The bridge is now published openly on npm and ClawHub; the
